@@ -171,6 +171,22 @@ router.patch('/:id', async (req: Request, res: Response) => {
       data: updateData,
     });
 
+    // Update technician stats if assigned
+    if (assignedTechnicianId) {
+      const technician = await prisma.technician.findUnique({
+        where: { id: assignedTechnicianId },
+      });
+      if (technician) {
+        await prisma.technician.update({
+          where: { id: assignedTechnicianId },
+          data: {
+            activeTickets: technician.activeTickets + 1,
+            status: technician.activeTickets + 1 > 0 ? 'busy' : 'available',
+          },
+        });
+      }
+    }
+
     res.json(ticket);
   } catch (error) {
     console.error('Error updating ticket:', error);
