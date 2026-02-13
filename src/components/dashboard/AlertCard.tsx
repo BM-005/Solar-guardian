@@ -2,13 +2,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { FaultDetection } from '@/types/solar';
-import { AlertTriangle, Clock, Thermometer, MapPin, UserPlus } from 'lucide-react';
+import { AlertTriangle, Clock, Thermometer, MapPin } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
 
 interface AlertCardProps {
   fault: FaultDetection;
-  onCreateTicket?: (faultId: string) => void;
   onDismiss?: (faultId: string) => void;
 }
 
@@ -26,7 +25,7 @@ const severityBadgeStyles = {
   critical: 'bg-red-500 text-red-500-foreground animate-pulse',
 };
 
-export function AlertCard({ fault, onCreateTicket, onDismiss }: AlertCardProps) {
+export function AlertCard({ fault, onDismiss }: AlertCardProps) {
   return (
     <Card className={cn('overflow-hidden border-2', severityStyles[fault.severity])}>
       <CardHeader className="pb-3">
@@ -89,15 +88,7 @@ export function AlertCard({ fault, onCreateTicket, onDismiss }: AlertCardProps) 
         <div className="flex gap-2">
           <Button
             size="sm"
-            className="flex-1"
-            onClick={() => onCreateTicket?.(fault.id)}
-          >
-            <UserPlus className="mr-2 h-4 w-4" />
-            Create Ticket
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
+            className="w-full"
             onClick={() => onDismiss?.(fault.id)}
           >
             Dismiss

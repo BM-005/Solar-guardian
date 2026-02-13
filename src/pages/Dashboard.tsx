@@ -37,7 +37,7 @@ const defaultWeather: WeatherData = {
   temperature: 28,
   condition: 'sunny',
   humidity: 45,
-  sunlightIntensity: 850,
+  sunlightIntensity: 85,
   recordedAt: new Date().toISOString(),
   windSpeed: 12,
   uvIndex: 8,
@@ -108,6 +108,11 @@ interface DashboardData {
   analytics: typeof defaultAnalytics;
 }
 
+interface PowerPoint {
+  timestamp: string;
+  value: number;
+}
+
 // Helper function to add timeout to fetch requests
 function fetchWithTimeout(url: string, timeoutMs: number = 10000): Promise<Response> {
   return new Promise((resolve, reject) => {
@@ -146,10 +151,12 @@ export default function Dashboard() {
     };
   }, []);
 
-  async function fetchData() {
+  async function fetchData(showLoader: boolean = false) {
     if (!mountedRef.current) return;
     
-    setLoading(true);
+    if (showLoader) {
+      setLoading(true);
+    }
     setError(null);
 
     try {
@@ -200,9 +207,9 @@ export default function Dashboard() {
           }
         }
 
-        let powerDaily: any[] = [];
-        let powerWeekly: any[] = [];
-        let powerMonthly: any[] = [];
+        let powerDaily: PowerPoint[] = [];
+        let powerWeekly: PowerPoint[] = [];
+        let powerMonthly: PowerPoint[] = [];
 
         if (powerDailyRes.ok) {
           try { powerDaily = await powerDailyRes.json(); } catch (e) { console.warn('Failed to parse daily power data'); }
@@ -242,8 +249,14 @@ export default function Dashboard() {
   }
 
   useEffect(() => {
-    // fetchData(); // Commented out to load with default data immediately
-    setLoading(false);
+    fetchData(true);
+    const intervalId = window.setInterval(() => {
+      fetchData();
+    }, 15000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
   }, []);
 
   if (loading) {
@@ -306,14 +319,14 @@ export default function Dashboard() {
           title="Total Panels"
           value={metrics.totalPanels}
           icon={Sun}
-          trend={{ value: 2.5, isPositive: true }}
+          animate={false}
         />
         <MetricCard
           title="Current Generation"
           value={metrics.currentGeneration}
           suffix="kW"
           icon={Zap}
-          trend={{ value: 8.3, isPositive: true }}
+          animate={false}
         />
         <MetricCard
           title="Efficiency"
@@ -321,6 +334,7 @@ export default function Dashboard() {
           suffix="%"
           icon={Gauge}
           variant={metrics.efficiency > 85 ? 'success' : 'warning'}
+          animate={false}
         />
         <MetricCard
           title="Carbon Saved"
@@ -328,18 +342,21 @@ export default function Dashboard() {
           suffix="kg"
           icon={Leaf}
           variant="success"
+          animate={false}
         />
         <MetricCard
           title="Technicians"
           value={metrics.availableTechnicians}
           suffix="available"
           icon={Users}
+          animate={false}
         />
         <MetricCard
           title="Open Tickets"
           value={metrics.openTickets}
           icon={AlertTriangle}
           variant={metrics.openTickets > 0 ? 'warning' : 'default'}
+          animate={false}
         />
       </div>
 

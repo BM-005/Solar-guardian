@@ -11,10 +11,11 @@ interface PanelHealthProps {
 }
 
 export function PanelHealthOverview({ healthy, warning, fault, offline, total }: PanelHealthProps) {
-  const healthyPercent = (healthy / total) * 100;
-  const warningPercent = (warning / total) * 100;
-  const faultPercent = (fault / total) * 100;
-  const offlinePercent = (offline / total) * 100;
+  const safeTotal = total > 0 ? total : 1;
+  const healthyPercent = (healthy / safeTotal) * 100;
+  const warningPercent = (warning / safeTotal) * 100;
+  const faultPercent = (fault / safeTotal) * 100;
+  const offlinePercent = (offline / safeTotal) * 100;
 
   const segments = [
     { label: 'Healthy', count: healthy, percent: healthyPercent, color: 'bg-success' },

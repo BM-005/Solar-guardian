@@ -16,7 +16,6 @@ import {
   MessageSquare,
   ExternalLink,
   Filter,
-  Plus
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import {
@@ -26,8 +25,6 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
-import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
 
 interface TicketFromAPI {
   id: string;
@@ -97,14 +94,6 @@ export default function Tickets() {
   const [ticketDetailsOpen, setTicketDetailsOpen] = useState(false);
   const [ticketDetails, setTicketDetails] = useState<any>(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
-  const [createTicketOpen, setCreateTicketOpen] = useState(false);
-  const [creatingTicket, setCreatingTicket] = useState(false);
-  const [newTicket, setNewTicket] = useState({
-    panelId: '',
-    faultType: '',
-    priority: 'medium' as 'low' | 'medium' | 'high' | 'critical',
-    description: '',
-  });
 
   useEffect(() => {
     async function fetchData() {
@@ -184,49 +173,6 @@ export default function Tickets() {
     }
   };
 
-  const handleCreateTicket = async () => {
-    if (!newTicket.description.trim() || !newTicket.faultType.trim()) {
-      alert('Please fill in all required fields');
-      return;
-    }
-
-    setCreatingTicket(true);
-    try {
-      const response = await fetch('/api/tickets', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          panelId: newTicket.panelId || null,
-          priority: newTicket.priority,
-          description: newTicket.description,
-          faultType: newTicket.faultType,
-        }),
-      });
-
-      if (response.ok) {
-        const createdTicket = await response.json();
-        setTickets(prev => [createdTicket, ...prev]);
-        setCreateTicketOpen(false);
-        setNewTicket({
-          panelId: '',
-          faultType: '',
-          priority: 'medium',
-          description: '',
-        });
-      } else {
-        const error = await response.json();
-        alert(`Failed to create ticket: ${error.error || 'Unknown error'}`);
-      }
-    } catch (err) {
-      console.error('Error creating ticket:', err);
-      alert('Failed to create ticket. Please try again.');
-    } finally {
-      setCreatingTicket(false);
-    }
-  };
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-[calc(100vh-8rem)]">
@@ -301,10 +247,6 @@ export default function Tickets() {
           <Filter className="mr-2 h-4 w-4" />
           More Filters
         </Button>
-        <Button onClick={() => setCreateTicketOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Create Ticket
-        </Button>
       </div>
 
       {/* More Filters Dialog */}
@@ -355,74 +297,6 @@ export default function Tickets() {
             </Button>
             <Button onClick={() => setFiltersOpen(false)}>
               Apply Filters
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Create Ticket Dialog */}
-      <Dialog open={createTicketOpen} onOpenChange={setCreateTicketOpen}>
-        <DialogContent className="sm:max-w-[500px]">
-          <DialogHeader>
-            <DialogTitle>Create New Ticket</DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <Label htmlFor="panelId">Panel ID (Optional)</Label>
-              <Input
-                id="panelId"
-                placeholder="e.g., PNL-001"
-                value={newTicket.panelId}
-                onChange={(e) => setNewTicket(prev => ({ ...prev, panelId: e.target.value }))}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="faultType">Fault Type *</Label>
-              <Input
-                id="faultType"
-                placeholder="e.g., Wiring Issue, Hot Spot, Cracked Panel"
-                value={newTicket.faultType}
-                onChange={(e) => setNewTicket(prev => ({ ...prev, faultType: e.target.value }))}
-                required
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="priority">Priority</Label>
-              <Select
-                value={newTicket.priority}
-                onValueChange={(value: 'low' | 'medium' | 'high' | 'critical') =>
-                  setNewTicket(prev => ({ ...prev, priority: value }))
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="low">Low</SelectItem>
-                  <SelectItem value="medium">Medium</SelectItem>
-                  <SelectItem value="high">High</SelectItem>
-                  <SelectItem value="critical">Critical</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="description">Description *</Label>
-              <Textarea
-                id="description"
-                placeholder="Describe the issue in detail..."
-                value={newTicket.description}
-                onChange={(e) => setNewTicket(prev => ({ ...prev, description: e.target.value }))}
-                rows={4}
-                required
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateTicketOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleCreateTicket} disabled={creatingTicket}>
-              {creatingTicket ? 'Creating...' : 'Create Ticket'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -551,7 +425,7 @@ export default function Tickets() {
           <h3 className="text-lg font-semibold">No tickets found</h3>
           <p className="text-muted-foreground">
             {tickets.length === 0
-              ? 'Create your first ticket to get started.'
+              ? 'No tickets available.'
               : 'Try adjusting your filters.'}
           </p>
         </div>

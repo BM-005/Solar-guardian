@@ -39,6 +39,7 @@ export function MetricCard({
     const steps = 60;
     const increment = value / steps;
     let current = 0;
+
     const timer = setInterval(() => {
       current += increment;
       if (current >= value) {
@@ -68,29 +69,31 @@ export function MetricCard({
 
   return (
     <Card className={cn('card-hover overflow-hidden', variantStyles[variant])}>
-      <CardContent className="p-6">
-        <div className="flex items-start justify-between">
-          <div className="flex-1">
-            <p className="text-sm font-medium text-muted-foreground">{title}</p>
-            <div className="mt-2 flex items-baseline gap-1">
-              {prefix && <span className="text-lg text-muted-foreground">{prefix}</span>}
-              <span className="text-3xl font-bold tracking-tight">
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium text-muted-foreground">{title}</p>
+            <div className="mt-2 flex flex-wrap items-baseline gap-1">
+              {prefix && <span className="text-base text-muted-foreground">{prefix}</span>}
+              <span className="break-all text-2xl font-bold tracking-tight sm:text-3xl">
                 {displayValue.toLocaleString()}
               </span>
-              {suffix && <span className="text-lg text-muted-foreground">{suffix}</span>}
+              {suffix && <span className="text-xs text-muted-foreground sm:text-sm">{suffix}</span>}
             </div>
             {trend && (
-              <div className={cn(
-                'mt-2 flex items-center text-sm',
-                trend.isPositive ? 'text-success' : 'text-destructive'
-              )}>
-                <span>{trend.isPositive ? '↑' : '↓'} {Math.abs(trend.value)}%</span>
+              <div
+                className={cn(
+                  'mt-2 flex items-center text-xs sm:text-sm',
+                  trend.isPositive ? 'text-success' : 'text-destructive'
+                )}
+              >
+                <span>{trend.isPositive ? '?' : '?'} {Math.abs(trend.value)}%</span>
                 <span className="ml-1 text-muted-foreground">vs last week</span>
               </div>
             )}
           </div>
-          <div className={cn('rounded-xl p-3', iconStyles[variant])}>
-            <Icon className="h-6 w-6" />
+          <div className={cn('shrink-0 rounded-lg p-2.5', iconStyles[variant])}>
+            <Icon className="h-5 w-5" />
           </div>
         </div>
       </CardContent>

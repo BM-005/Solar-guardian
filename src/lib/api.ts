@@ -151,12 +151,6 @@ export const ticketsApi = {
   
   getById: (id: string) => apiFetch<Ticket>(`/api/tickets/${id}`),
   
-  create: (data: Partial<Ticket>) =>
-    apiFetch<Ticket>('/api/tickets', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-  
   update: (id: string, data: Partial<Ticket>) =>
     apiFetch<Ticket>(`/api/tickets/${id}`, {
       method: 'PATCH',
