@@ -112,7 +112,6 @@ export interface DashboardMetrics {
   currentGeneration: number; // kW
   maxCapacity: number; // kW
   efficiency: number; // percentage
-  carbonSaved: number; // kg
   availableTechnicians: number;
   openTickets: number;
 }

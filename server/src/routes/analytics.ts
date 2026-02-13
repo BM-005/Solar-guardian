@@ -200,7 +200,6 @@ router.get('/dashboard', async (_req: Request, res: Response) => {
       currentGeneration: currentGen / 1000,
       maxCapacity: maxCapacity / 1000,
       efficiency: Math.round((avgEfficiency._avg.efficiency || 0) * 10) / 10,
-      carbonSaved: Math.round((currentGen / 1000) * 0.42 * 365),
       availableTechnicians,
       openTickets,
       recentFaults,

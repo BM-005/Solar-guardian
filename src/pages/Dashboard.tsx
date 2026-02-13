@@ -3,7 +3,6 @@ import {
   Sun,
   Zap,
   Gauge,
-  Leaf,
   Users,
   AlertTriangle,
   RefreshCw
@@ -26,7 +25,6 @@ const defaultMetrics: DashboardMetrics = {
   currentGeneration: 45.5,
   maxCapacity: 50,
   efficiency: 91,
-  carbonSaved: 1250,
   availableTechnicians: 5,
   openTickets: 2,
 };
@@ -314,7 +312,7 @@ export default function Dashboard() {
       </div>
 
       {/* Metrics Grid */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <MetricCard
           title="Total Panels"
           value={metrics.totalPanels}
@@ -334,14 +332,6 @@ export default function Dashboard() {
           suffix="%"
           icon={Gauge}
           variant={metrics.efficiency > 85 ? 'success' : 'warning'}
-          animate={false}
-        />
-        <MetricCard
-          title="Carbon Saved"
-          value={metrics.carbonSaved}
-          suffix="kg"
-          icon={Leaf}
-          variant="success"
           animate={false}
         />
         <MetricCard

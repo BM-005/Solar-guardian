@@ -85,7 +85,6 @@ export interface DashboardMetrics {
   currentGeneration: number;
   maxCapacity: number;
   efficiency: number;
-  carbonSaved: number;
   availableTechnicians: number;
   openTickets: number;
 }
