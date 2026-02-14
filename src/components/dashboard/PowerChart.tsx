@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { PowerGeneration } from '@/types/solar';
 import {
   AreaChart,
   Area,
@@ -14,29 +13,30 @@ import {
 import { format } from 'date-fns';
 
 interface PowerChartProps {
-  daily: PowerGeneration[];
-  weekly: PowerGeneration[];
-  monthly: PowerGeneration[];
+  daily: { timestamp: Date | string; value: number }[];
+  weekly: { timestamp: Date | string; value: number }[];
+  monthly: { timestamp: Date | string; value: number }[];
 }
 
 export function PowerChart({ daily, weekly, monthly }: PowerChartProps) {
   const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly'>('daily');
+  const toDate = (timestamp: Date | string) => (timestamp instanceof Date ? timestamp : new Date(timestamp));
 
   const getData = () => {
     switch (period) {
       case 'daily':
         return daily.map(d => ({
-          time: format(d.timestamp, 'HH:mm'),
+          time: format(toDate(d.timestamp), 'HH:mm'),
           value: d.value,
         }));
       case 'weekly':
         return weekly.filter((_, i) => i % 4 === 0).map(d => ({
-          time: format(d.timestamp, 'EEE HH:mm'),
+          time: format(toDate(d.timestamp), 'EEE HH:mm'),
           value: d.value,
         }));
       case 'monthly':
         return monthly.map(d => ({
-          time: format(d.timestamp, 'MMM dd'),
+          time: format(toDate(d.timestamp), 'MMM dd'),
           value: d.value,
         }));
     }

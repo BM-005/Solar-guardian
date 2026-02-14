@@ -27,6 +27,11 @@ interface PanelData {
   installDate: string;
   inverterGroup: string;
   stringId: string;
+  sensorDeviceId?: string | null;
+  sensorLastUpdated?: string | null;
+  sensorVoltage?: number | null;
+  sensorCurrentMa?: number | null;
+  sensorPowerMw?: number | null;
 }
 
 const statusColors: Record<string, string> = {
@@ -54,9 +59,11 @@ export default function PanelGrid() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let isMounted = true;
+
     async function fetchPanels() {
       try {
-        const response = await fetch('/api/panels');
+        const response = await fetch(`/api/panels?t=${Date.now()}`, { cache: 'no-store' });
         if (!response.ok) {
           throw new Error(`API error: ${response.status}`);
         }
@@ -65,21 +72,29 @@ export default function PanelGrid() {
         console.log('API Response:', data);
         
         if (Array.isArray(data)) {
-          setPanels(data);
+          if (isMounted) setPanels(data);
         } else {
           console.error('Expected array, got:', typeof data);
-          setPanels([]);
+          if (isMounted) setPanels([]);
         }
       } catch (err) {
         console.error('Fetch error:', err);
-        setError(err instanceof Error ? err.message : 'Failed to load panels');
-        setPanels([]);
+        if (isMounted) {
+          setError(err instanceof Error ? err.message : 'Failed to load panels');
+          setPanels([]);
+        }
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     }
     
     fetchPanels();
+    const intervalId = window.setInterval(fetchPanels, 30000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
+    };
   }, []);
 
   // Get unique zones
@@ -353,6 +368,8 @@ export default function PanelGrid() {
                         <TableHead>Status</TableHead>
                         <TableHead>Efficiency</TableHead>
                         <TableHead>Output</TableHead>
+                        <TableHead>Voltage</TableHead>
+                        <TableHead>Current</TableHead>
                         <TableHead>Temperature</TableHead>
                         <TableHead>Last Checked</TableHead>
                       </TableRow>
@@ -369,6 +386,8 @@ export default function PanelGrid() {
                           </TableCell>
                           <TableCell>{panel.efficiency?.toFixed(1) || '0'}%</TableCell>
                           <TableCell>{panel.currentOutput || 0}W</TableCell>
+                          <TableCell>{panel.sensorVoltage?.toFixed(2) || 'N/A'}V</TableCell>
+                          <TableCell>{panel.sensorCurrentMa?.toFixed(2) || 'N/A'}mA</TableCell>
                           <TableCell>{panel.temperature?.toFixed(1) || '0'}°C</TableCell>
                           <TableCell className="text-muted-foreground">
                             {panel.lastChecked ? format(new Date(panel.lastChecked), 'MMM dd, HH:mm') : 'N/A'}
@@ -426,8 +445,28 @@ export default function PanelGrid() {
               <span>{selectedPanel.inverterGroup || 'N/A'}</span>
             </div>
             <div className="flex justify-between">
+              <span className="text-muted-foreground">Device</span>
+              <span>{selectedPanel.sensorDeviceId || 'N/A'}</span>
+            </div>
+            <div className="flex justify-between">
               <span className="text-muted-foreground">String</span>
               <span>{selectedPanel.stringId || 'N/A'}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Voltage</span>
+              <span>{selectedPanel.sensorVoltage?.toFixed(2) || 'N/A'}V</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Current</span>
+              <span>{selectedPanel.sensorCurrentMa?.toFixed(2) || 'N/A'}mA</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Sensor Updated</span>
+              <span>
+                {selectedPanel.sensorLastUpdated
+                  ? format(new Date(selectedPanel.sensorLastUpdated), 'MMM dd, HH:mm:ss')
+                  : 'N/A'}
+              </span>
             </div>
           </CardContent>
         </Card>
