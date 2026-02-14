@@ -16,6 +16,8 @@ async function main() {
   await prisma.ticketNote.deleteMany();
   await prisma.ticket.deleteMany();
   await prisma.faultDetection.deleteMany();
+  await prisma.espSensorReading.deleteMany();
+  await prisma.espDevice.deleteMany();
   await prisma.solarPanel.deleteMany();
   await prisma.zone.deleteMany({
     where: { name: { notIn: ['A', 'B'] } },
@@ -67,6 +69,16 @@ async function main() {
     }
   }
   console.log(`Created ${zones.length} zones and ${panelCreated} panels (2 zones x 3x3)`);
+
+  const espDevices = ['ESP_01', 'ESP_02', 'ESP_03'];
+  for (const deviceId of espDevices) {
+    await prisma.espDevice.upsert({
+      where: { deviceId },
+      update: {},
+      create: { deviceId },
+    });
+  }
+  console.log(`Created ${espDevices.length} ESP32 device records`);
 
   const technicians = [
     { name: 'Marcus Chen', email: 'marcus.chen@solarfarm.com', status: 'available' as const },

@@ -17,16 +17,16 @@ import { Button } from '@/components/ui/button';
 
 // Default sample metrics when API is unavailable
 const defaultMetrics: DashboardMetrics = {
-  totalPanels: 100,
-  healthyPanels: 95,
-  warningPanels: 3,
-  faultPanels: 2,
+  totalPanels: 0,
+  healthyPanels: 0,
+  warningPanels: 0,
+  faultPanels: 0,
   offlinePanels: 0,
-  currentGeneration: 45.5,
-  maxCapacity: 50,
-  efficiency: 91,
-  availableTechnicians: 5,
-  openTickets: 2,
+  currentGeneration: 0,
+  maxCapacity: 0,
+  efficiency: 0,
+  availableTechnicians: 0,
+  openTickets: 0,
 };
 
 // Default sample weather when API is unavailable
@@ -69,8 +69,21 @@ const createMonthDate = (month: number) => {
   return date;
 };
 
+interface PowerPoint {
+  timestamp: string | Date;
+  value: number;
+}
+
+interface DashboardAnalytics {
+  powerGeneration: {
+    daily: PowerPoint[];
+    weekly: PowerPoint[];
+    monthly: PowerPoint[];
+  };
+}
+
 // Default sample analytics when API is unavailable
-const defaultAnalytics = {
+const defaultAnalytics: DashboardAnalytics = {
   powerGeneration: {
     daily: [
       { timestamp: createDate(6), value: 0 },
@@ -103,22 +116,77 @@ const defaultAnalytics = {
 interface DashboardData {
   metrics: DashboardMetrics;
   weather: WeatherData;
-  analytics: typeof defaultAnalytics;
+  analytics: DashboardAnalytics;
 }
 
-interface PowerPoint {
-  timestamp: string;
-  value: number;
+interface LiveStatusData {
+  totalPanels: number;
+  healthyPanels: number;
+  warningPanels: number;
+  faultPanels: number;
+  offlinePanels: number;
+  currentGenerationKw: number;
+  avgEfficiency: number;
+  mappedDevices: number;
+  reportingDevices: number;
+  onlineDevices: number;
+  latestDeviceSeenAt: string | null;
+  averageVoltage: number;
+  averageCurrentMa: number;
+  totalPowerMw: number;
+  panelGenerationKw?: number;
+  panelAvgEfficiency?: number;
+  devices: LiveDeviceStatus[];
+  powerHistory30s: LivePowerPoint[];
 }
+
+interface LiveDeviceStatus {
+  deviceId: string;
+  label: string;
+  online: boolean;
+  status: 'healthy' | 'warning' | 'fault' | 'offline';
+  lastSeenAt: string | null;
+  staleSeconds: number | null;
+  voltage: number | null;
+  currentMa: number | null;
+  powerMw: number | null;
+}
+
+interface LivePowerPoint {
+  timestamp: string;
+  totalPowerKw: number;
+  deviceCount: number;
+}
+
+const defaultLiveStatus: LiveStatusData = {
+  totalPanels: 0,
+  healthyPanels: 0,
+  warningPanels: 0,
+  faultPanels: 0,
+  offlinePanels: 0,
+  currentGenerationKw: 0,
+  avgEfficiency: 0,
+  mappedDevices: 0,
+  reportingDevices: 0,
+  onlineDevices: 0,
+  latestDeviceSeenAt: null,
+  averageVoltage: 0,
+  averageCurrentMa: 0,
+  totalPowerMw: 0,
+  devices: [],
+  powerHistory30s: [],
+};
 
 // Helper function to add timeout to fetch requests
 function fetchWithTimeout(url: string, timeoutMs: number = 10000): Promise<Response> {
+  // Add timestamp to prevent caching
+  const urlWithTimestamp = `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
   return new Promise((resolve, reject) => {
     const timeoutId = setTimeout(() => {
       reject(new Error(`Request timeout: ${url}`));
     }, timeoutMs);
 
-    fetch(url)
+    fetch(urlWithTimestamp, { cache: 'no-store' })
       .then((response) => {
         clearTimeout(timeoutId);
         resolve(response);
@@ -131,6 +199,7 @@ function fetchWithTimeout(url: string, timeoutMs: number = 10000): Promise<Respo
 }
 
 export default function Dashboard() {
+  console.log('🚀🚀🚀 DASHBOARD COMPONENT LOADED - NEW VERSION 2025 🚀🚀🚀');
   const [data, setData] = useState<DashboardData>({
     metrics: defaultMetrics,
     weather: defaultWeather,
@@ -139,6 +208,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isRetrying, setIsRetrying] = useState(false);
+  const [liveStatus, setLiveStatus] = useState<LiveStatusData>(defaultLiveStatus);
   const mountedRef = useRef(true);
 
   // Cleanup on unmount
@@ -150,6 +220,7 @@ export default function Dashboard() {
   }, []);
 
   async function fetchData(showLoader: boolean = false) {
+    console.log('🔥🔥🔥 FETCH DATA CALLED - STARTING TO FETCH REAL DATA 🔥🔥🔥');
     if (!mountedRef.current) return;
     
     if (showLoader) {
@@ -158,42 +229,82 @@ export default function Dashboard() {
     setError(null);
 
     try {
+      console.log('📊 [Dashboard] Starting data fetch...');
+      
       // Set a timeout for the entire operation
-      const totalTimeout = 15000; // 15 seconds max for entire dashboard
+      const totalTimeout = 15000;
       const overallTimeoutId = setTimeout(() => {
         if (mountedRef.current) {
-          console.warn('Dashboard data fetch timeout - using default values');
+          console.warn('[Dashboard] Data fetch timeout');
           setError('Request timed out - using cached/default values');
         }
       }, totalTimeout);
 
       try {
+        console.log('📊 [Dashboard] Fetching metrics from /api/analytics/dashboard');
         // Fetch all data with individual timeouts
-        const [metricsRes, weatherRes, powerDailyRes, powerWeeklyRes, powerMonthlyRes] = await Promise.all([
-          fetchWithTimeout('/api/analytics/dashboard', 10000).catch(e => ({ ok: false } as Response)),
-          fetchWithTimeout('/api/weather/current', 10000).catch(e => ({ ok: false } as Response)),
-          fetchWithTimeout('/api/analytics/power?period=daily', 10000).catch(e => ({ ok: false } as Response)),
-          fetchWithTimeout('/api/analytics/power?period=weekly', 10000).catch(e => ({ ok: false } as Response)),
-          fetchWithTimeout('/api/analytics/power?period=monthly', 10000).catch(e => ({ ok: false } as Response)),
+        const [metricsRes, weatherRes, powerDailyRes, powerWeeklyRes, powerMonthlyRes, liveStatusRes] = await Promise.all([
+          fetchWithTimeout('/api/analytics/dashboard', 10000).catch(e => {
+            console.error('❌ Metrics fetch failed:', e);
+            return { ok: false } as Response;
+          }),
+          fetchWithTimeout('/api/weather/current', 10000).catch(e => {
+            console.error('❌ Weather fetch failed:', e);
+            return { ok: false } as Response;
+          }),
+          fetchWithTimeout('/api/analytics/power?period=daily', 10000).catch(e => {
+            console.error('❌ Daily power fetch failed:', e);
+            return { ok: false } as Response;
+          }),
+          fetchWithTimeout('/api/analytics/power?period=weekly', 10000).catch(e => {
+            console.error('❌ Weekly power fetch failed:', e);
+            return { ok: false } as Response;
+          }),
+          fetchWithTimeout('/api/analytics/power?period=monthly', 10000).catch(e => {
+            console.error('❌ Monthly power fetch failed:', e);
+            return { ok: false } as Response;
+          }),
+          fetchWithTimeout('/api/panels/live-status', 10000).catch(e => {
+            console.error('Live status fetch failed:', e);
+            return { ok: false } as Response;
+          }),
         ]);
 
         clearTimeout(overallTimeoutId);
 
         if (!mountedRef.current) return;
 
+        // IMPORTANT: Fetch real metrics data or use defaults
         let metrics = defaultMetrics;
         if (metricsRes.ok) {
           try {
-            metrics = await metricsRes.json();
+            const fetchedMetrics = await metricsRes.json();
+            console.log('✅ [Dashboard] Real metrics from API:', fetchedMetrics);
+            metrics = {
+              totalPanels: fetchedMetrics.totalPanels ?? defaultMetrics.totalPanels,
+              healthyPanels: fetchedMetrics.healthyPanels ?? defaultMetrics.healthyPanels,
+              warningPanels: fetchedMetrics.warningPanels ?? defaultMetrics.warningPanels,
+              faultPanels: fetchedMetrics.faultPanels ?? defaultMetrics.faultPanels,
+              offlinePanels: fetchedMetrics.offlinePanels ?? defaultMetrics.offlinePanels,
+              currentGeneration: fetchedMetrics.currentGeneration ?? defaultMetrics.currentGeneration,
+              maxCapacity: fetchedMetrics.maxCapacity ?? defaultMetrics.maxCapacity,
+              efficiency: fetchedMetrics.efficiency ?? defaultMetrics.efficiency,
+              availableTechnicians: fetchedMetrics.availableTechnicians ?? defaultMetrics.availableTechnicians,
+              openTickets: fetchedMetrics.openTickets ?? defaultMetrics.openTickets,
+            };
+            console.log('✅ [Dashboard] Transformed metrics:', metrics);
           } catch (e) {
-            console.warn('Failed to parse metrics response');
+            console.error('❌ Failed to parse metrics response:', e);
           }
+        } else {
+          console.warn('❌ [Dashboard] Metrics API returned not ok:', metricsRes.status);
         }
 
         let weather = defaultWeather;
         if (weatherRes.ok) {
           try {
             const weatherApi = await weatherRes.json();
+            console.log('✅ [Dashboard] Real weather from API:', weatherApi);
             weather = {
               ...weatherApi,
               windSpeed: weatherApi.windSpeed || 0,
@@ -201,7 +312,7 @@ export default function Dashboard() {
               forecast: weatherApi.forecast || [],
             };
           } catch (e) {
-            console.warn('Failed to parse weather response');
+            console.warn('Failed to parse weather response:', e);
           }
         }
 
@@ -210,33 +321,105 @@ export default function Dashboard() {
         let powerMonthly: PowerPoint[] = [];
 
         if (powerDailyRes.ok) {
-          try { powerDaily = await powerDailyRes.json(); } catch (e) { console.warn('Failed to parse daily power data'); }
+          try { 
+            powerDaily = await powerDailyRes.json(); 
+            console.log('✅ [Dashboard] Daily power data:', powerDaily.length, 'points');
+          } catch (e) { 
+            console.warn('Failed to parse daily power data:', e); 
+          }
         }
         if (powerWeeklyRes.ok) {
-          try { powerWeekly = await powerWeeklyRes.json(); } catch (e) { console.warn('Failed to parse weekly power data'); }
+          try { 
+            powerWeekly = await powerWeeklyRes.json(); 
+            console.log('✅ [Dashboard] Weekly power data:', powerWeekly.length, 'points');
+          } catch (e) { 
+            console.warn('Failed to parse weekly power data:', e); 
+          }
         }
         if (powerMonthlyRes.ok) {
-          try { powerMonthly = await powerMonthlyRes.json(); } catch (e) { console.warn('Failed to parse monthly power data'); }
+          try { 
+            powerMonthly = await powerMonthlyRes.json(); 
+            console.log('✅ [Dashboard] Monthly power data:', powerMonthly.length, 'points');
+          } catch (e) { 
+            console.warn('Failed to parse monthly power data:', e); 
+          }
         }
 
+        let powerHistory30s: LivePowerPoint[] = [];
+        let liveMetricsPatch: Partial<DashboardMetrics> = {};
+        if (liveStatusRes.ok) {
+          try {
+            const statusData = await liveStatusRes.json();
+            const parsedLiveStatus: LiveStatusData = {
+              totalPanels: statusData.totalPanels ?? 0,
+              healthyPanels: statusData.healthyPanels ?? 0,
+              warningPanels: statusData.warningPanels ?? 0,
+              faultPanels: statusData.faultPanels ?? 0,
+              offlinePanels: statusData.offlinePanels ?? 0,
+              currentGenerationKw: statusData.currentGenerationKw ?? 0,
+              avgEfficiency: statusData.avgEfficiency ?? 0,
+              mappedDevices: statusData.mappedDevices ?? 0,
+              reportingDevices: statusData.reportingDevices ?? 0,
+              onlineDevices: statusData.onlineDevices ?? 0,
+              latestDeviceSeenAt: statusData.latestDeviceSeenAt ?? null,
+              averageVoltage: statusData.averageVoltage ?? 0,
+              averageCurrentMa: statusData.averageCurrentMa ?? 0,
+              totalPowerMw: statusData.totalPowerMw ?? 0,
+              panelGenerationKw: statusData.panelGenerationKw ?? 0,
+              panelAvgEfficiency: statusData.panelAvgEfficiency ?? 0,
+              devices: Array.isArray(statusData.devices) ? statusData.devices : [],
+              powerHistory30s: Array.isArray(statusData.powerHistory30s) ? statusData.powerHistory30s : [],
+            };
+            powerHistory30s = parsedLiveStatus.powerHistory30s;
+            setLiveStatus(parsedLiveStatus);
+            liveMetricsPatch = {
+              totalPanels: parsedLiveStatus.totalPanels,
+              healthyPanels: parsedLiveStatus.healthyPanels,
+              warningPanels: parsedLiveStatus.warningPanels,
+              faultPanels: parsedLiveStatus.faultPanels,
+              offlinePanels: parsedLiveStatus.offlinePanels,
+              currentGeneration: parsedLiveStatus.currentGenerationKw,
+              efficiency: parsedLiveStatus.avgEfficiency,
+            };
+          } catch (e) {
+            console.warn('Failed to parse live status:', e);
+          }
+        } else {
+          setLiveStatus(defaultLiveStatus);
+        }
+        const dailyPowerForChart: PowerPoint[] =
+          powerHistory30s.length > 0
+            ? powerHistory30s.map((point) => ({
+                timestamp: point.timestamp,
+                value: point.totalPowerKw,
+              }))
+            : powerDaily;
+        const mergedMetrics: DashboardMetrics = {
+          ...metrics,
+          ...liveMetricsPatch,
+        };
+
+        // Update state with fetched data
+        console.log('📊 [Dashboard] Setting state with new data');
         setData({
-          metrics,
+          metrics: mergedMetrics,
           weather,
           analytics: {
             powerGeneration: {
-              daily: powerDaily,
+              daily: dailyPowerForChart,
               weekly: powerWeekly,
               monthly: powerMonthly,
             },
           },
         });
+        
+        console.log('✅ [Dashboard] Data state updated successfully');
         setError(null);
       } catch (err) {
         clearTimeout(overallTimeoutId);
         if (!mountedRef.current) return;
-        console.warn('Dashboard fetch failed:', err);
+        console.error('❌ [Dashboard] Major fetch error:', err);
         setError(err instanceof Error ? err.message : 'Failed to load dashboard data');
-        // Keep default values
       }
     } finally {
       if (mountedRef.current) {
@@ -250,7 +433,7 @@ export default function Dashboard() {
     fetchData(true);
     const intervalId = window.setInterval(() => {
       fetchData();
-    }, 15000);
+    }, 30000); // Refresh every 30 seconds
 
     return () => {
       window.clearInterval(intervalId);
@@ -272,6 +455,49 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
+      {/* Data Status Banner */}
+      <div className="rounded-lg border bg-blue-50 dark:bg-blue-950 p-4 mb-4">
+        <div className="text-sm text-blue-700 dark:text-blue-200">
+          <p className="font-semibold">📊 Live Data Status:</p>
+          <p>Total Panels: <span className="font-bold">{liveStatus.totalPanels}</span> | 
+             Healthy: <span className="font-bold text-green-600">{liveStatus.healthyPanels}</span> | 
+             Warning: <span className="font-bold text-yellow-600">{liveStatus.warningPanels}</span> | 
+             Fault: <span className="font-bold text-red-600">{liveStatus.faultPanels}</span></p>
+          <p>Current Generation: <span className="font-bold">{liveStatus.currentGenerationKw.toFixed(2)} kW</span> | 
+             Efficiency: <span className="font-bold">{liveStatus.avgEfficiency.toFixed(1)}%</span></p>
+          <p>ESP Devices: <span className="font-bold">{liveStatus.onlineDevices}/{liveStatus.mappedDevices}</span> online | 
+             Avg Voltage: <span className="font-bold">{liveStatus.averageVoltage.toFixed(2)} V</span> | 
+             Avg Current: <span className="font-bold">{(liveStatus.averageCurrentMa / 1000).toFixed(3)} A</span></p>
+          <p className="text-xs mt-2 text-blue-600 dark:text-blue-300">
+            {liveStatus.latestDeviceSeenAt
+              ? `Last ESP update: ${new Date(liveStatus.latestDeviceSeenAt).toLocaleTimeString()}`
+              : 'Waiting for ESP32 readings...'}
+          </p>
+          <div className="mt-3 grid gap-2 md:grid-cols-3">
+            {liveStatus.devices.map((device) => (
+              <div
+                key={device.deviceId}
+                className={`rounded border px-3 py-2 ${
+                  device.online
+                    ? device.status === 'healthy'
+                      ? 'border-green-300 bg-green-100/60 text-green-900 dark:bg-green-900/30 dark:text-green-200'
+                      : device.status === 'warning'
+                      ? 'border-yellow-300 bg-yellow-100/60 text-yellow-900 dark:bg-yellow-900/30 dark:text-yellow-200'
+                      : 'border-red-300 bg-red-100/60 text-red-900 dark:bg-red-900/30 dark:text-red-200'
+                    : 'border-slate-300 bg-slate-100/70 text-slate-700 dark:bg-slate-900/40 dark:text-slate-300'
+                }`}
+              >
+                <p className="font-semibold uppercase">{device.label}</p>
+                <p>{device.online ? 'Online' : 'Offline'}</p>
+                <p>V: {device.voltage !== null ? `${device.voltage.toFixed(2)} V` : 'N/A'}</p>
+                <p>I: {device.currentMa !== null ? `${(device.currentMa / 1000).toFixed(3)} A` : 'N/A'}</p>
+                <p>P: {device.powerMw !== null ? `${(device.powerMw / 1000).toFixed(2)} W` : 'N/A'}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
       {/* Error/Timeout Banner */}
       {error && (
         <div className="rounded-lg bg-yellow-50 dark:bg-yellow-950 border border-yellow-200 dark:border-yellow-800 p-4">
@@ -373,6 +599,7 @@ export default function Dashboard() {
           <WeatherWidget weather={weather} />
         </div>
       </div>
+
     </div>
   );
 }

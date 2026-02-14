@@ -156,3 +156,31 @@ model PowerGeneration {
   @@index([timestamp])
 }
 
+model EspDevice {
+  id              String             @id @default(cuid())
+  deviceId        String             @unique
+  lastSeenAt      DateTime?
+  latestVoltage   Float?
+  latestCurrentMa Float?
+  latestPowerMw   Float?
+  readings        EspSensorReading[]
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@index([lastSeenAt])
+}
+
+model EspSensorReading {
+  id         String    @id @default(cuid())
+  device     EspDevice @relation(fields: [deviceRefId], references: [id])
+  deviceRefId String
+  voltage    Float
+  currentMa  Float
+  powerMw    Float
+  recordedAt DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+
+  @@index([deviceRefId])
+  @@index([recordedAt])
+}
+

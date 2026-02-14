@@ -1,0 +1,146 @@
+#include <WiFi.h>
+#include <Wire.h>
+#include <Adafruit_INA219.h>
+
+#define DEVICE_ID "ESP_03"
+#define LED_PIN 2
+#define SDA_PIN 21
+#define SCL_PIN 22
+
+const char* ssid = "TP-Link_83B8";
+const char* password = "15400338";
+
+const char* host = "192.168.0.169";
+const int   port = 3000;
+const char* path = "/api/panels/sensor-update";
+
+Adafruit_INA219 ina219;
+
+unsigned long lastSendTime = 0;
+unsigned long lastBlinkTime = 0;
+unsigned long lastWifiCheck = 0;
+
+bool ledState = false;
+bool inaOK = false;
+
+// ---------------- SAFE VALUE ----------------
+float safeValue(float value) {
+  if (isnan(value) || isinf(value)) return 0.0;
+  return value;
+}
+
+// ---------------- SETUP ----------------
+void setup() {
+
+  Serial.begin(115200);
+  delay(1000);
+
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
+
+  // Proper I2C init for FireBeetle
+  Wire.begin(SDA_PIN, SCL_PIN);
+  delay(100);
+
+  if (ina219.begin()) {
+    ina219.setCalibration_16V_400mA();
+    inaOK = true;
+    Serial.println("INA219 detected");
+  } else {
+    Serial.println("INA219 NOT detected");
+  }
+
+  // Connect WiFi
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting");
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("\nWiFi Connected");
+  Serial.print("ESP IP: ");
+  Serial.println(WiFi.localIP());
+}
+
+// ---------------- LOOP ----------------
+void loop() {
+
+  // 🔵 LED Blink (independent)
+  if (millis() - lastBlinkTime >= 500) {
+    lastBlinkTime = millis();
+    ledState = !ledState;
+    digitalWrite(LED_PIN, ledState);
+  }
+
+  // 🔁 WiFi Auto Reconnect
+  if (millis() - lastWifiCheck >= 5000) {
+    lastWifiCheck = millis();
+
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("WiFi reconnecting...");
+      WiFi.disconnect();
+      WiFi.begin(ssid, password);
+    }
+  }
+
+  // 📡 Send every 5 seconds
+  if (WiFi.status() == WL_CONNECTED && millis() - lastSendTime >= 5000) {
+
+    lastSendTime = millis();
+
+    float voltage = 0;
+    float current = 0;
+    float power   = 0;
+
+    if (inaOK) {
+      voltage = safeValue(ina219.getBusVoltage_V());
+      current = safeValue(ina219.getCurrent_mA());
+      power   = safeValue(ina219.getPower_mW());
+    }
+
+    sendToBackend(voltage, current, power);
+  }
+}
+
+// ---------------- SEND TO BACKEND ----------------
+void sendToBackend(float voltage, float current, float power) {
+
+  WiFiClient client;
+
+  if (!client.connect(host, port)) {
+    Serial.println("Server connection failed");
+    return;
+  }
+
+  String payload = "{\"device_id\":\"";
+  payload += DEVICE_ID;
+  payload += "\",\"voltage\":";
+  payload += String(voltage, 3);
+  payload += ",\"current\":";
+  payload += String(current, 2);
+  payload += ",\"power\":";
+  payload += String(power, 2);
+  payload += "}";
+
+  // Send HTTP POST
+  client.print("POST ");
+  client.print(path);
+  client.println(" HTTP/1.1");
+
+  client.print("Host: ");
+  client.println(host);
+
+  client.println("Content-Type: application/json");
+  client.print("Content-Length: ");
+  client.println(payload.length());
+  client.println("Connection: close");
+  client.println();
+
+  client.println(payload);
+
+  client.stop();  // 🔥 Close immediately (no waiting → no WDT)
+
+  Serial.println("Data sent safely");
+}
