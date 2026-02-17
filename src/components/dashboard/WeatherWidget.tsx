@@ -16,6 +16,7 @@ const weatherIcons = {
 };
 
 export function WeatherWidget({ weather, openMeteoWeather }: WeatherWidgetProps) {
+  const DEGREE_C = '\u00B0C';
   const WeatherIcon = weatherIcons[weather.condition as keyof typeof weatherIcons] ?? CloudSun;
   const OpenMeteoIcon =
     openMeteoWeather
@@ -34,7 +35,7 @@ export function WeatherWidget({ weather, openMeteoWeather }: WeatherWidgetProps)
               <WeatherIcon className="h-10 w-10 text-accent" />
             </div>
             <div>
-              <div className="text-4xl font-bold">{weather.temperature.toFixed(2)}°C</div>
+              <div className="text-4xl font-bold">{weather.temperature.toFixed(2)}{DEGREE_C}</div>
               <div className="text-sm capitalize text-muted-foreground">
                 {String(weather.condition).replace('-', ' ')}
               </div>
@@ -63,7 +64,7 @@ export function WeatherWidget({ weather, openMeteoWeather }: WeatherWidgetProps)
                 <OpenMeteoIcon className="h-8 w-8 text-accent" />
               </div>
               <div>
-                <div className="text-2xl font-semibold">{Math.round(openMeteoWeather.temperature)}Â°C</div>
+                <div className="text-2xl font-semibold">{Math.round(openMeteoWeather.temperature)}{DEGREE_C}</div>
                 <div className="text-sm capitalize text-muted-foreground">
                   {String(openMeteoWeather.condition).replace('-', ' ')}
                 </div>
