@@ -1,145 +1,5 @@
-// Solar Farm Data Types
-
-export type PanelStatus = 'healthy' | 'warning' | 'fault' | 'offline';
-
-export interface SolarPanel {
-  id: string;
-  row: number;
-  column: number;
-  zone: string;
-  status: PanelStatus;
-  efficiency: number; // 0-100%
-  currentOutput: number; // Watts
-  maxOutput: number; // Watts
-  temperature: number; // Celsius
-  lastChecked: Date;
-  installDate: Date;
-  inverterGroup: string;
-  stringId: string;
-}
-
-export interface FaultDetection {
-  id: string;
-  panelId: string;
-  detectedAt: Date;
-  severity: 'low' | 'medium' | 'high' | 'critical';
-  faultType: string;
-  droneImageUrl: string;
-  thermalImageUrl: string;
-  aiConfidence: number; // 0-100%
-  aiAnalysis: string;
-  recommendedAction: string;
-  location: {
-    x: number; // percentage position on panel
-    y: number;
-  };
-}
-
-export interface Ticket {
-  id: string;
-  ticketNumber: string;
-  panelId: string;
-  faultId: string;
-  status: 'open' | 'in-progress' | 'resolved' | 'closed';
-  priority: 'low' | 'medium' | 'high' | 'critical';
-  createdAt: Date;
-  updatedAt: Date;
-  resolvedAt?: Date;
-  assignedTechnicianId?: string;
-  description: string;
-  faultType: string;
-  droneImageUrl: string;
-  thermalImageUrl: string;
-  aiAnalysis: string;
-  recommendedAction: string;
-  resolutionNotes?: string;
-  resolutionCause?: string;
-  resolutionImageUrl?: string;
-  notes: TicketNote[];
-}
-
-export interface TicketNote {
-  id: string;
-  authorId: string;
-  authorName: string;
-  content: string;
-  createdAt: Date;
-}
-
-export interface Technician {
-  id: string;
-  name: string;
-  email: string;
-  phone: string;
-  avatar: string;
-  status: 'available' | 'busy' | 'offline';
-  skills: string[];
-  activeTickets: number;
-  resolvedTickets: number;
-  avgResolutionTime: number; // hours
-}
-
-export interface WeatherData {
-  id?: string;
-  temperature: number;
-  condition: 'sunny' | 'cloudy' | 'partly-cloudy' | 'rainy' | 'stormy';
-  humidity: number;
-  sunlightIntensity: number; // 0-100%
-  recordedAt?: string;
-  windSpeed?: number;
-  uvIndex?: number;
-  forecast: WeatherForecast[];
-}
-
-export interface WeatherForecast {
-  hour: number;
-  temperature: number;
-  condition: 'sunny' | 'cloudy' | 'partly-cloudy' | 'rainy' | 'stormy';
-  sunlightIntensity: number;
-}
-
-export interface PowerGeneration {
-  timestamp: Date;
-  value: number; // kW
-}
-
-export interface DashboardMetrics {
-  totalPanels: number;
-  healthyPanels: number;
-  warningPanels: number;
-  faultPanels: number;
-  offlinePanels: number;
-  currentGeneration: number; // kW
-  maxCapacity: number; // kW
-  efficiency: number; // percentage
-  availableTechnicians: number;
-  openTickets: number;
-}
-
-export interface AnalyticsData {
-  powerGeneration: {
-    daily: PowerGeneration[];
-    weekly: PowerGeneration[];
-    monthly: PowerGeneration[];
-  };
-  efficiency: {
-    byZone: { zone: string; efficiency: number }[];
-    trend: { date: Date; efficiency: number }[];
-  };
-  environmental: {
-    carbonOffset: number; // tons
-    treesEquivalent: number;
-    homesPowered: number;
-  };
-  faultStatistics: {
-    byType: { type: string; count: number }[];
-    byMonth: { month: string; count: number }[];
-    avgResolutionTime: number; // hours
-  };
-}
-
 // =====================================================
-// RASPBERRY PI SOLAR SCAN TYPES
+// RASPBERRY PI RECEIVER TYPES
 // =====================================================
 
 export type ScanSeverity = 'CRITICAL' | 'HIGH' | 'MODERATE' | 'LOW';
@@ -174,10 +34,11 @@ export interface PanelDetection {
 
 export interface SolarScan {
   id: string;
+  backendId?: string;
   timestamp: string;
   priority: 'HIGH' | 'MEDIUM' | 'NORMAL';
   status: ScanStatus;
-  
+
   // Thermal analysis data
   thermalMinTemp: number | null;
   thermalMaxTemp: number | null;
@@ -187,19 +48,33 @@ export interface SolarScan {
   severity: ScanSeverity | null;
   thermalImageUrl: string | null;
   rgbImageUrl?: string | null;
-  
+
   // Summary counts
   dustyPanelCount: number;
   cleanPanelCount: number;
   totalPanels: number;
-  
+
   // Source device info
   deviceId: string | null;
   deviceName: string | null;
-  
+
+  // ── NEW: AI Fusion Report fields (populated from Pi report) ──────────────
+  aiReport?: {
+    healthScore: number;
+    recommendation: string;
+    summary: string;
+    rootCause: string;
+    impactAssessment: string;
+    timeframe: string;
+    source: string;
+    baselineAware: boolean;
+    deviationFromBaseline: string;
+    genaiInsights: string;
+  } | null;
+
   // Relations
   panelDetections: PanelDetection[];
-  
+
   createdAt: string;
   updatedAt: string;
 }
@@ -213,8 +88,33 @@ export interface SolarScanStats {
   avgThermalDelta: number;
 }
 
+export interface WeatherForecast {
+  hour: number;
+  temperature: number;
+  condition: 'sunny' | 'cloudy' | 'partly-cloudy' | 'rainy' | 'stormy';
+  sunlightIntensity: number;
+}
+
+export interface PowerGeneration {
+  timestamp: Date;
+  value: number;
+}
+
+export interface DashboardMetrics {
+  totalPanels: number;
+  healthyPanels: number;
+  warningPanels: number;
+  faultPanels: number;
+  offlinePanels: number;
+  currentGeneration: number;
+  maxCapacity: number;
+  efficiency: number;
+  availableTechnicians: number;
+  openTickets: number;
+}
+
 // =====================================================
-// RASPBERRY PI RECEIVER TYPES
+// RASPBERRY PI PAYLOAD TYPES
 // =====================================================
 
 export interface PiReport {
@@ -225,6 +125,11 @@ export interface PiReport {
   summary: string;
   root_cause: string;
   impact_assessment: string;
+  // Extra Pi fields
+  source?: string;
+  baseline_aware?: boolean;
+  deviation_from_baseline?: string;
+  genai_insights?: string;
 }
 
 export interface PiRgbStats {
@@ -241,6 +146,19 @@ export interface PiPanelCrop {
   web_path?: string | null;
 }
 
+// Thermal data block — Pi may send this as 'thermal' OR 'thermal_stats'
+export interface PiThermalBlock {
+  min_temp?: number | null;
+  max_temp?: number | null;
+  mean_temp?: number | null;
+  delta?: number | null;
+  risk_score?: number | null;
+  severity?: ScanSeverity | null;
+  // Extra fields from thermal_stats
+  fault?: string;
+  baseline_delta?: number | null;
+}
+
 export interface PiAnalysisResult {
   id?: string;
   capture_id: string;
@@ -250,40 +168,91 @@ export interface PiAnalysisResult {
   rgb_stats: PiRgbStats;
   frame_b64?: string;
   main_image_web?: string | null;
+  thermal_b64?: string;
+  thermal_image_web?: string | null;
+  // Pi sends either 'thermal' or 'thermal_stats' — handle both
+  thermal?: PiThermalBlock;
+  thermal_stats?: PiThermalBlock;
   panel_crops: PiPanelCrop[];
 }
 
-// Convert PiAnalysisResult to SolarScan format
+// ─── Convert Pi payload → SolarScan for the Scans page ──────────────────────
 export function convertPiResultToSolarScan(piResult: PiAnalysisResult): SolarScan {
-  const cleanCount = piResult.rgb_stats.clean;
-  const dustyCount = piResult.rgb_stats.dusty;
-  const totalPanels = piResult.rgb_stats.total;
-  
-  // Determine severity based on health score
+  const cleanCount = piResult.rgb_stats?.clean ?? 0;
+  const dustyCount = piResult.rgb_stats?.dusty ?? 0;
+  const totalPanels = piResult.rgb_stats?.total ?? 0;
+
+  // ── FIX: read 'thermal' first, fall back to 'thermal_stats' ─────────────
+  const thermalBlock: PiThermalBlock = piResult.thermal ?? piResult.thermal_stats ?? {};
+
+  // Determine severity from thermal block or health score
   let severity: ScanSeverity = 'LOW';
-  if (piResult.report.health_score < 30) severity = 'CRITICAL';
-  else if (piResult.report.health_score < 50) severity = 'HIGH';
-  else if (piResult.report.health_score < 75) severity = 'MODERATE';
-  
+  if (thermalBlock.severity) {
+    severity = thermalBlock.severity;
+  } else {
+    const hs = piResult.report?.health_score ?? 100;
+    if (hs < 30) severity = 'CRITICAL';
+    else if (hs < 50) severity = 'HIGH';
+    else if (hs < 75) severity = 'MODERATE';
+  }
+
+  const thermalRisk =
+    thermalBlock.risk_score ??
+    Math.max(0, Math.min(100, Math.round(100 - (piResult.report?.health_score ?? 100))));
+
+  // ── Image URLs ────────────────────────────────────────────────────────────
+  // Use web paths served by the Node server (saved to disk by server/src/index.ts)
+  const rgbUrl = piResult.main_image_web ?? null;
+  const thermalUrl = piResult.thermal_image_web ?? null;
+
+  // ── AI Fusion Report ──────────────────────────────────────────────────────
+  const report = piResult.report ?? ({} as PiReport);
+  const aiReport = {
+    healthScore: report.health_score ?? 0,
+    recommendation: report.recommendation ?? '',
+    summary: report.summary ?? '',
+    rootCause: report.root_cause ?? '',
+    impactAssessment: report.impact_assessment ?? '',
+    timeframe: report.timeframe ?? '',
+    source: report.source ?? 'fallback',
+    baselineAware: report.baseline_aware ?? false,
+    deviationFromBaseline: report.deviation_from_baseline ?? 'N/A',
+    genaiInsights: report.genai_insights ?? '',
+  };
+
   return {
     id: `pi-${piResult.capture_id}`,
-    timestamp: piResult.timestamp,
-    priority: piResult.report.priority,
+    backendId: piResult.id,
+    timestamp: piResult.received_at || piResult.timestamp,
+    priority: report.priority ?? 'NORMAL',
     status: 'pending',
-    thermalMinTemp: null,
-    thermalMaxTemp: null,
-    thermalMeanTemp: null,
-    thermalDelta: null,
-    riskScore: 100 - piResult.report.health_score,
-    severity: severity,
-    thermalImageUrl: null,
-    rgbImageUrl: piResult.main_image_web || null,
+
+    // Thermal
+    thermalMinTemp: thermalBlock.min_temp ?? null,
+    thermalMaxTemp: thermalBlock.max_temp ?? null,
+    thermalMeanTemp: thermalBlock.mean_temp ?? null,
+    thermalDelta: thermalBlock.delta ?? null,
+    riskScore: thermalRisk,
+    severity,
+
+    // Images
+    thermalImageUrl: thermalUrl,
+    rgbImageUrl: rgbUrl,
+
+    // Panel counts
     dustyPanelCount: dustyCount,
     cleanPanelCount: cleanCount,
-    totalPanels: totalPanels,
+    totalPanels,
+
+    // Device
     deviceId: 'raspberry-pi',
     deviceName: 'Raspberry Pi Scanner',
-    panelDetections: piResult.panel_crops.map((crop, index) => ({
+
+    // AI Report
+    aiReport,
+
+    // Panel detections
+    panelDetections: (piResult.panel_crops ?? []).map((crop, index) => ({
       id: `det-${piResult.capture_id}-${index}`,
       scanId: `pi-${piResult.capture_id}`,
       panelNumber: crop.panel_number,
@@ -298,6 +267,7 @@ export function convertPiResultToSolarScan(piResult: PiAnalysisResult): SolarSca
       solarPanelId: null,
       createdAt: piResult.received_at || new Date().toISOString(),
     })),
+
     createdAt: piResult.received_at || new Date().toISOString(),
     updatedAt: piResult.received_at || new Date().toISOString(),
   };

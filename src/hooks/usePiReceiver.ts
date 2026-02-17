@@ -18,7 +18,7 @@ export interface UsePiReceiverReturn extends PiReceiverState {
 }
 
 // Default URL - can be configured via environment variable or user input
-const DEFAULT_PI_RECEIVER_URL = import.meta.env.VITE_PI_RECEIVER_URL || 'http://localhost:3000';
+const DEFAULT_PI_RECEIVER_URL = import.meta.env.VITE_PI_RECEIVER_URL || 'http://localhost:5001';
 
 export function usePiReceiver(): UsePiReceiverReturn {
   const [isConnected, setIsConnected] = useState(false);
@@ -26,7 +26,7 @@ export function usePiReceiver(): UsePiReceiverReturn {
   const [error, setError] = useState<string | null>(null);
   const [piScans, setPiScans] = useState<SolarScan[]>([]);
   const [serverUrl, setServerUrl] = useState(DEFAULT_PI_RECEIVER_URL);
-  
+
   const socketRef = useRef<Socket | null>(null);
 
   const connect = useCallback((url: string) => {
@@ -104,7 +104,7 @@ export function usePiReceiver(): UsePiReceiverReturn {
     if (DEFAULT_PI_RECEIVER_URL && !socketRef.current) {
       connect(DEFAULT_PI_RECEIVER_URL);
     }
-    
+
     return () => {
       if (socketRef.current) {
         socketRef.current.disconnect();
