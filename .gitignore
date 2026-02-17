@@ -23,6 +23,9 @@ dist-ssr
 *.sln
 *.sw?
 
+# Runtime image cache from Pi receiver
+server/received_from_pi/
+
 # Environment files (Private team repo - .env files ARE committed)
 # Remove these lines if making repo public
 # .env

@@ -34,6 +34,7 @@ import { usePiReceiver } from '@/hooks/usePiReceiver';
 
 interface SolarScanFromAPI {
   id: string;
+  backendId?: string;
   timestamp: string;
   priority: 'HIGH' | 'MEDIUM' | 'NORMAL';
   status: 'pending' | 'processed' | 'archived';
@@ -123,7 +124,8 @@ export default function Scans() {
     totalPiScans, 
     serverUrl, 
     connect: connectToPi, 
-    disconnect: disconnectFromPi 
+    disconnect: disconnectFromPi,
+    removePiScan,
   } = usePiReceiver();
   
   const [piUrlInput, setPiUrlInput] = useState(serverUrl);
@@ -171,7 +173,16 @@ export default function Scans() {
     setScanDetailsOpen(true);
   };
 
-  const handleUpdateStatus = async (scanId: string, newStatus: string) => {
+  const getPersistedScanId = (scan: SolarScanFromAPI) => {
+    if (scan.backendId) return scan.backendId;
+    if (scan.id.startsWith('pi-')) return null;
+    return scan.id;
+  };
+
+  const handleUpdateStatus = async (scan: SolarScanFromAPI, newStatus: string) => {
+    const scanId = getPersistedScanId(scan);
+    if (!scanId) return;
+
     try {
       const response = await fetch(`/api/solar-scans/${scanId}`, {
         method: 'PATCH',
@@ -179,15 +190,23 @@ export default function Scans() {
         body: JSON.stringify({ status: newStatus }),
       });
       if (response.ok) {
+        if (scan.isPiScan) {
+          removePiScan(scan.id);
+        }
         fetchScans();
         fetchStats();
+      } else {
+        const text = await response.text();
+        console.error('Failed to update status:', response.status, text);
       }
     } catch (err) {
       console.error('Failed to update scan status:', err);
     }
   };
 
-  const handleDeleteScan = async (scanId: string) => {
+  const handleDeleteScan = async (scan: SolarScanFromAPI) => {
+    const scanId = getPersistedScanId(scan);
+    if (!scanId) return;
     if (!confirm('Are you sure you want to delete this scan?')) return;
     
     try {
@@ -195,8 +214,17 @@ export default function Scans() {
         method: 'DELETE',
       });
       if (response.ok) {
+        await fetch(`/api/pi-results/${scanId}`, { method: 'DELETE' }).catch(() => {
+          // best effort: this only removes cached live result rows
+        });
+        if (scan.isPiScan) {
+          removePiScan(scan.id);
+        }
         fetchScans();
         fetchStats();
+      } else {
+        const text = await response.text();
+        console.error('Failed to delete scan:', response.status, text);
       }
     } catch (err) {
       console.error('Failed to delete scan:', err);
@@ -226,6 +254,10 @@ export default function Scans() {
 
   const getRelativeTime = (dateStr: string) => {
     return formatDistanceToNow(new Date(dateStr), { addSuffix: true });
+  };
+
+  const getDisplayTimestamp = (scan: SolarScanFromAPI) => {
+    return scan.createdAt || scan.updatedAt || scan.timestamp;
   };
 
   if (loading) {
@@ -430,7 +462,7 @@ export default function Scans() {
                 </div>
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Timestamp</label>
-                  <p className="mt-1">{getRelativeTime(selectedScan.timestamp)}</p>
+                  <p className="mt-1">{getRelativeTime(getDisplayTimestamp(selectedScan))}</p>
                 </div>
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Status</label>
@@ -558,16 +590,16 @@ export default function Scans() {
               {/* Actions */}
               <div className="flex gap-2 pt-4">
                 {selectedScan.status === 'pending' && (
-                  <Button onClick={() => handleUpdateStatus(selectedScan.id, 'processed')}>
+                  <Button onClick={() => handleUpdateStatus(selectedScan, 'processed')}>
                     Mark as Processed
                   </Button>
                 )}
                 {selectedScan.status === 'processed' && (
-                  <Button onClick={() => handleUpdateStatus(selectedScan.id, 'archived')}>
+                  <Button onClick={() => handleUpdateStatus(selectedScan, 'archived')}>
                     Archive
                   </Button>
                 )}
-                <Button variant="destructive" onClick={() => handleDeleteScan(selectedScan.id)}>
+                <Button variant="destructive" onClick={() => handleDeleteScan(selectedScan)}>
                   <Trash2 className="mr-2 h-4 w-4" />
                   Delete
                 </Button>
@@ -614,7 +646,7 @@ export default function Scans() {
                     <div>
                       <p className="font-semibold">{scan.deviceName || 'Unknown Device'}</p>
                       <p className="text-sm text-muted-foreground">
-                        {getRelativeTime(scan.timestamp)}
+                        {getRelativeTime(getDisplayTimestamp(scan))}
                       </p>
                     </div>
                   </div>

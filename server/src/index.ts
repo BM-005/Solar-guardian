@@ -28,6 +28,7 @@ const io = new Server(httpServer, {
 });
 
 const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || '0.0.0.0';
 const MAX_PI_RESULTS = 50;
 
 // Directory to save received images from Pi
@@ -73,6 +74,15 @@ type PiAnalysisResultInput = {
     dusty?: number;
   };
   frame_b64?: string;
+  thermal_b64?: string;
+  thermal?: {
+    min_temp?: number;
+    max_temp?: number;
+    mean_temp?: number;
+    delta?: number;
+    risk_score?: number;
+    severity?: 'CRITICAL' | 'HIGH' | 'MODERATE' | 'LOW';
+  };
   panel_crops?: PiPanelCropInput[];
   device_id?: string;
   device_name?: string;
@@ -98,6 +108,15 @@ type PiResultForClients = {
     dusty: number;
   };
   main_image_web: string | null;
+  thermal_image_web: string | null;
+  thermal: {
+    min_temp: number | null;
+    max_temp: number | null;
+    mean_temp: number | null;
+    delta: number | null;
+    risk_score: number | null;
+    severity: 'CRITICAL' | 'HIGH' | 'MODERATE' | 'LOW' | null;
+  };
   panel_crops: Array<{
     panel_number: string;
     status: 'CLEAN' | 'DUSTY' | 'FAULTY' | 'UNKNOWN';
@@ -147,6 +166,19 @@ app.get('/api/pi-results', (_req, res) => {
   res.json({
     total: piResults.length,
     results: piResults,
+  });
+});
+
+app.delete('/api/pi-results/:id', (req, res) => {
+  const targetId = req.params.id;
+  const before = piResults.length;
+  const next = piResults.filter((result) => result.id !== targetId);
+  piResults.length = 0;
+  piResults.push(...next);
+
+  res.json({
+    success: true,
+    removed: before - next.length,
   });
 });
 
@@ -224,33 +256,49 @@ io.on('connection', (socket) => {
   });
 
   // Full laptop_receiver.py-compatible payload support
-  socket.on('pi_analysis_result', async (data: PiAnalysisResultInput) => {
+  socket.on(
+    'pi_analysis_result',
+    async (
+      data: PiAnalysisResultInput,
+      ack?: (response: { success: boolean; scanId?: string; error?: string }) => void
+    ) => {
     try {
       if (!data?.capture_id || !data?.report) {
-        socket.emit('pi-analysis-received', {
+        const response = {
           success: false,
           error: 'Missing required fields (capture_id/report)',
-        });
+        };
+        socket.emit('pi-analysis-received', response);
+        if (ack) ack(response);
         return;
       }
 
       const captureId = String(data.capture_id);
       const healthScore = Number(data.report.health_score ?? 0);
       const priority = data.report.priority ?? 'NORMAL';
+      const receivedAt = new Date();
       const timestamp =
         data.timestamp && !Number.isNaN(Date.parse(data.timestamp))
           ? data.timestamp
-          : new Date().toISOString();
+          : receivedAt.toISOString();
 
       const timestampSuffix = makeTimestampSuffix();
       const safeCaptureId = sanitizeFilePart(captureId);
       let mainImageWebPath: string | null = null;
+      let thermalImageWebPath: string | null = null;
 
       if (data.frame_b64) {
         const captureFileName = `capture_${safeCaptureId}_${timestampSuffix}.jpg`;
         const captureFilePath = path.join(CAPTURES_DIR, captureFileName);
         fs.writeFileSync(captureFilePath, decodeBase64Image(data.frame_b64));
         mainImageWebPath = `/api/pi-images/captures/${captureFileName}`;
+      }
+
+      if (data.thermal_b64) {
+        const thermalFileName = `thermal_${safeCaptureId}_${timestampSuffix}.jpg`;
+        const thermalFilePath = path.join(CAPTURES_DIR, thermalFileName);
+        fs.writeFileSync(thermalFilePath, decodeBase64Image(data.thermal_b64));
+        thermalImageWebPath = `/api/pi-images/captures/${thermalFileName}`;
       }
 
       const panelCropsInput = Array.isArray(data.panel_crops) ? data.panel_crops : [];
@@ -282,17 +330,29 @@ io.on('connection', (socket) => {
       const cleanPanelCount =
         data.rgb_stats?.clean ?? panelCropsForClients.filter((crop) => crop.status === 'CLEAN').length;
       const totalPanels = data.rgb_stats?.total ?? panelCropsForClients.length;
-      const severity = getSeverityFromHealthScore(healthScore);
-      const riskScore = Math.max(0, Math.min(100, Math.round(100 - healthScore)));
+      const severity =
+        data.thermal?.severity ?? getSeverityFromHealthScore(healthScore);
+      const riskScore =
+        data.thermal?.risk_score ?? Math.max(0, Math.min(100, Math.round(100 - healthScore)));
+      const thermalMinTemp = data.thermal?.min_temp ?? null;
+      const thermalMaxTemp = data.thermal?.max_temp ?? null;
+      const thermalMeanTemp = data.thermal?.mean_temp ?? null;
+      const thermalDelta = data.thermal?.delta ?? null;
 
       const savedScan = await prisma.solarScan.create({
         data: {
-          timestamp: new Date(timestamp),
+          // Use server receive time to avoid timezone skew from Pi-local timestamps.
+          timestamp: receivedAt,
           priority,
           status: 'pending',
           riskScore,
           severity,
-          thermalImageUrl: null,
+          thermalMinTemp,
+          thermalMaxTemp,
+          thermalMeanTemp,
+          thermalDelta,
+          thermalImageUrl: thermalImageWebPath,
+          rgbImageUrl: mainImageWebPath,
           dustyPanelCount,
           cleanPanelCount,
           totalPanels,
@@ -317,8 +377,8 @@ io.on('connection', (socket) => {
       const resultForClients: PiResultForClients = {
         id: savedScan.id,
         capture_id: captureId,
-        timestamp,
-        received_at: new Date().toISOString(),
+        timestamp: receivedAt.toISOString(),
+        received_at: receivedAt.toISOString(),
         report: {
           health_score: healthScore,
           priority,
@@ -334,6 +394,15 @@ io.on('connection', (socket) => {
           dusty: dustyPanelCount,
         },
         main_image_web: mainImageWebPath,
+        thermal_image_web: thermalImageWebPath,
+        thermal: {
+          min_temp: thermalMinTemp,
+          max_temp: thermalMaxTemp,
+          mean_temp: thermalMeanTemp,
+          delta: thermalDelta,
+          risk_score: riskScore,
+          severity,
+        },
         panel_crops: panelCropsForClients,
       };
 
@@ -345,18 +414,22 @@ io.on('connection', (socket) => {
       io.emit('new_result', resultForClients);
       io.emit('new-solar-scan', { scanId: savedScan.id, source: 'pi_analysis_result' });
 
-      socket.emit('pi-analysis-received', {
+      const response = {
         success: true,
         scanId: savedScan.id,
-      });
+      };
+      socket.emit('pi-analysis-received', response);
+      if (ack) ack(response);
 
       console.log('Stored pi_analysis_result:', savedScan.id);
     } catch (error) {
       console.error('Error processing pi_analysis_result:', error);
-      socket.emit('pi-analysis-received', {
+      const response = {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
-      });
+      };
+      socket.emit('pi-analysis-received', response);
+      if (ack) ack(response);
     }
   });
 
@@ -372,8 +445,9 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 });
 
 // Start server
-httpServer.listen(PORT, () => {
+httpServer.listen(Number(PORT), HOST, () => {
   console.log(`Solar Guardian API running on http://localhost:${PORT}`);
+  console.log(`Solar Guardian API listening on ${HOST}:${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/health`);
   console.log('Socket.io enabled for real-time data');
 });

@@ -41,6 +41,7 @@ router.post('/', async (req: Request, res: Response) => {
         riskScore: thermal?.risk_score || null,
         severity: thermal?.severity || null,
         thermalImageUrl: thermalImage || null,
+        rgbImageUrl: rgbImage || null,
         
         // Summary counts
         dustyPanelCount,
@@ -133,6 +134,40 @@ router.get('/latest', async (_req: Request, res: Response) => {
   }
 });
 
+// GET /api/solar-scans/stats/summary - Get scan statistics
+router.get('/stats/summary', async (_req: Request, res: Response) => {
+  try {
+    const totalScans = await prisma.solarScan.count();
+    const pendingScans = await prisma.solarScan.count({ where: { status: 'pending' } });
+    const processedScans = await prisma.solarScan.count({ where: { status: 'processed' } });
+    
+    const criticalScans = await prisma.solarScan.count({ 
+      where: { severity: 'CRITICAL' } 
+    });
+    
+    const highRiskScans = await prisma.solarScan.count({ 
+      where: { severity: { in: ['CRITICAL', 'HIGH'] } } 
+    });
+
+    // Average thermal delta
+    const avgThermalDelta = await prisma.solarScan.aggregate({
+      _avg: { thermalDelta: true }
+    });
+
+    res.json({
+      totalScans,
+      pendingScans,
+      processedScans,
+      criticalScans,
+      highRiskScans,
+      avgThermalDelta: avgThermalDelta._avg.thermalDelta || 0
+    });
+  } catch (error) {
+    console.error('Error fetching scan stats:', error);
+    res.status(500).json({ error: 'Failed to fetch scan statistics' });
+  }
+});
+
 // GET /api/solar-scans/:id - Get scan by ID
 router.get('/:id', async (req: Request, res: Response) => {
   try {
@@ -185,40 +220,6 @@ router.delete('/:id', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error deleting scan:', error);
     res.status(500).json({ error: 'Failed to delete scan' });
-  }
-});
-
-// GET /api/solar-scans/stats/summary - Get scan statistics
-router.get('/stats/summary', async (_req: Request, res: Response) => {
-  try {
-    const totalScans = await prisma.solarScan.count();
-    const pendingScans = await prisma.solarScan.count({ where: { status: 'pending' } });
-    const processedScans = await prisma.solarScan.count({ where: { status: 'processed' } });
-    
-    const criticalScans = await prisma.solarScan.count({ 
-      where: { severity: 'CRITICAL' } 
-    });
-    
-    const highRiskScans = await prisma.solarScan.count({ 
-      where: { severity: { in: ['CRITICAL', 'HIGH'] } } 
-    });
-
-    // Average thermal delta
-    const avgThermalDelta = await prisma.solarScan.aggregate({
-      _avg: { thermalDelta: true }
-    });
-
-    res.json({
-      totalScans,
-      pendingScans,
-      processedScans,
-      criticalScans,
-      highRiskScans,
-      avgThermalDelta: avgThermalDelta._avg.thermalDelta || 0
-    });
-  } catch (error) {
-    console.error('Error fetching scan stats:', error);
-    res.status(500).json({ error: 'Failed to fetch scan statistics' });
   }
 });
 
