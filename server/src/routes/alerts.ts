@@ -4,26 +4,13 @@ import { createFaultTicketAndAssignment, generateIncidentId } from './automation
 
 const router = Router();
 
-// Generate sequential alert ID in ALT-XXX format
+// Generate sequential alert ID in ALT-XXX format (always starting from ALT-001)
 const generateAlertId = async (): Promise<string> => {
   try {
-    // Get the latest alert to determine the next number
-    const latestAlert = await prisma.alert.findFirst({
-      orderBy: { createdAt: 'desc' },
-      select: { alertId: true },
-    });
-
-    let nextNumber = 1;
-    if (latestAlert?.alertId) {
-      // Extract number from formats like ALT-xxx
-      const match = latestAlert.alertId.match(/ALT-(\d+)/i);
-      if (match) {
-        nextNumber = parseInt(match[1], 10) + 1;
-      } else {
-        // For other formats, start from 1
-        nextNumber = 1;
-      }
-    }
+    // Always start fresh from ALT-001
+    const alertCount = await prisma.alert.count();
+    // Start from 1 and increment (ignoring old data)
+    const nextNumber = (alertCount % 999) + 1;
 
     // Format as ALT-001, ALT-002, etc.
     return `ALT-${nextNumber.toString().padStart(3, '0')}`;

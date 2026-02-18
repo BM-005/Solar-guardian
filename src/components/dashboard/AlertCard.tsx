@@ -2,13 +2,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Alert } from '@/types/solar';
-import { AlertTriangle, MapPin, Clock, Scan, Ticket } from 'lucide-react';
+import { AlertTriangle, MapPin, Clock, Scan } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
 
 interface AlertCardProps {
   alert: Alert;
-  ticketNumber?: string | null;
   onDismiss?: (alertId: string) => void;
 }
 
@@ -22,9 +21,9 @@ const statusBadgeStyles = {
   fault: 'bg-red-500 text-red-500-foreground',
 };
 
-export function AlertCard({ alert, ticketNumber, onDismiss }: AlertCardProps) {
-  // Display the alert ID directly - already in ALT-XXX format
-  const displayAlertId = alert.alertId || alert.id.slice(0, 8);
+export function AlertCard({ alert, onDismiss }: AlertCardProps) {
+  // Display the alert ID in ALT-XXX format
+  const displayAlertId = alert.alertId || `ALT-${alert.id.slice(0, 3)}`;
 
   return (
     <Card className={cn('overflow-hidden border-2', statusStyles[alert.status])}>
@@ -59,14 +58,6 @@ export function AlertCard({ alert, ticketNumber, onDismiss }: AlertCardProps) {
             <div className="flex items-center gap-2 text-muted-foreground">
               <Scan className="h-4 w-4" />
               <span>Scan ID: {alert.scanId.slice(0, 8)}...</span>
-            </div>
-          )}
-          {alert.ticketId && (
-            <div className="flex items-center gap-2 text-green-600">
-              <Ticket className="h-4 w-4" />
-              <span>
-                Ticket: {ticketNumber || alert.ticketId.slice(0, 8) + '...'}
-              </span>
             </div>
           )}
         </div>
