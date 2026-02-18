@@ -1,0 +1,38 @@
+{
+  "name": "solar-guardian-api",
+  "version": "1.0.0",
+  "description": "Solar Guardian Backend API",
+  "main": "dist/index.js",
+  "type": "module",
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "scripts": {
+    "dev": "cross-env SKIP_SEED=true tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:studio": "prisma studio",
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.22.1",
+    "openmeteo": "^1.2.3",
+    "pg": "^8.11.5",
+    "socket.io": "^4.8.3"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.12.7",
+    "@types/pg": "^8.11.5",
+    "cross-env": "^10.1.0",
+    "prisma": "^5.13.0",
+    "tsx": "^4.7.1",
+    "typescript": "^5.4.5"
+  }
+}

@@ -1,0 +1,256 @@
+// Prisma Schema for Solar Guardian
+// Configured for Neon PostgreSQL (Shared Database)
+
+generator client {
+  provider = "prisma-client-js"
+  // Optimize for serverless environments like Neon
+  previewFeatures = ["driverAdapters"] // Enable if using Neon serverless
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  // Neon-specific configuration
+  relationMode = "prisma"
+}
+
+model Zone {
+  id        String       @id @default(cuid())
+  name      String       @unique
+  panels    SolarPanel[]
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+}
+
+model SolarPanel {
+  id             String         @id @default(cuid())
+  panelId        String         @unique // PNL-A0101 format
+  row            Int
+  column         Int
+  zone           Zone           @relation(fields: [zoneId], references: [id])
+  zoneId         String
+  status         String
+  efficiency     Float          // 0-100%
+  currentOutput  Float         // Watts
+  maxOutput      Float         // Watts
+  temperature    Float         // Celsius
+  lastChecked    DateTime
+  installDate    DateTime
+  inverterGroup  String
+  stringId       String
+  tickets        Ticket[]
+  faultDetections FaultDetection[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([zoneId])
+  @@index([status])
+}
+
+model Technician {
+  id              String    @id @default(cuid())
+  name            String
+  email           String    @unique
+  phone           String
+  avatar          String?
+  status          String
+  skills          String
+  activeTickets   Int       @default(0)
+  resolvedTickets Int       @default(0)
+  avgResolutionTime Float   @default(0)
+  notes           TicketNote[]
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model FaultDetection {
+  id              String      @id @default(cuid())
+  panel           SolarPanel  @relation(fields: [panelId], references: [id])
+  panelId         String
+  detectedAt      DateTime
+  severity        String
+  faultType       String
+  droneImageUrl   String?
+  thermalImageUrl String?
+  aiConfidence    Float       // 0-100%
+  aiAnalysis      String
+  recommendedAction String
+  locationX       Float
+  locationY       Float
+  tickets         Ticket[]
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([panelId])
+  @@index([severity])
+}
+
+model Ticket {
+  id                String       @id @default(cuid())
+  ticketNumber      String       @unique
+  panel             SolarPanel?  @relation(fields: [panelId], references: [id])
+  panelId           String?
+  fault             FaultDetection? @relation(fields: [faultId], references: [id])
+  faultId           String?
+  status            String
+  priority          String
+  createdAt         DateTime
+  updatedAt         DateTime
+  resolvedAt        DateTime?
+  description       String
+  faultType         String
+  droneImageUrl     String?
+  thermalImageUrl   String?
+  aiAnalysis        String?
+  recommendedAction String?
+  resolutionNotes   String?
+  resolutionCause   String?
+  resolutionImageUrl String?
+  notes             TicketNote[]
+
+  @@index([status])
+  @@index([priority])
+}
+
+model TicketNote {
+  id          String     @id @default(cuid())
+  ticket      Ticket     @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  ticketId    String
+  author      Technician @relation(fields: [authorId], references: [id])
+  authorId    String
+  content     String
+  createdAt   DateTime   @default(now())
+
+  @@index([ticketId])
+}
+
+model WeatherData {
+  id              String   @id @default(cuid())
+  temperature     Float
+  condition       String
+  humidity        Float
+  sunlightIntensity Float  // 0-100%
+  recordedAt      DateTime @unique
+  createdAt       DateTime @default(now())
+
+  @@index([recordedAt])
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  role      String
+  avatar    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model PowerGeneration {
+  id         String   @id @default(cuid())
+  timestamp  DateTime
+  value      Float    // kW
+  createdAt  DateTime @default(now())
+
+  @@unique([timestamp])
+  @@index([timestamp])
+}
+
+model EspDevice {
+  id              String             @id @default(cuid())
+  deviceId        String             @unique
+  lastSeenAt      DateTime?
+  latestVoltage   Float?
+  latestCurrentMa Float?
+  latestPowerMw   Float?
+  readings        EspSensorReading[]
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@index([lastSeenAt])
+}
+
+model EspSensorReading {
+  id         String    @id @default(cuid())
+  device     EspDevice @relation(fields: [deviceRefId], references: [id])
+  deviceRefId String
+  voltage    Float
+  currentMa  Float
+  powerMw    Float
+  recordedAt DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+
+  @@index([deviceRefId])
+  @@index([recordedAt])
+}
+
+// =====================================================
+// RASPBERRY PI SOLAR SCAN MODELS
+// =====================================================
+
+model SolarScan {
+  id              String   @id @default(cuid())
+  timestamp       DateTime @default(now())
+  priority        String   // HIGH, MEDIUM, NORMAL
+  status          String   @default("pending") // pending, processed, archived
+  
+  // Thermal analysis data
+  thermalMinTemp  Float?
+  thermalMaxTemp  Float?
+  thermalMeanTemp Float?
+  thermalDelta    Float?
+  riskScore       Int?
+  severity        String?  // CRITICAL, HIGH, MODERATE, LOW
+  thermalImageUrl String?  // base64 encoded thermal image
+  rgbImageUrl     String?  // base64 encoded RGB image
+  
+  // Summary counts
+  dustyPanelCount Int      @default(0)
+  cleanPanelCount Int      @default(0)
+  totalPanels    Int      @default(0)
+  
+  // Source device info
+  deviceId        String?  // Raspberry Pi device ID
+  deviceName      String?  // e.g., "RPi-Camera-1"
+  
+  // Relations
+  panelDetections PanelDetection[]
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([timestamp])
+  @@index([status])
+  @@index([severity])
+}
+
+model PanelDetection {
+  id              String   @id @default(cuid())
+  scan            SolarScan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  scanId          String
+  
+  panelNumber     String   // e.g., "P1", "P2"
+  status          String   // CLEAN, DUSTY, FAULTY
+  
+  // Location in frame
+  x1              Int
+  y1              Int
+  x2              Int
+  y2              Int
+  
+  // Cropped image (base64)
+  cropImageUrl    String?
+  
+  // Associated fault (if any)
+  faultType       String?
+  confidence      Float?
+  
+  // Link to existing solar panel if matched
+  solarPanelId    String?
+  
+  createdAt       DateTime @default(now())
+
+  @@index([scanId])
+  @@index([status])
+}
+
