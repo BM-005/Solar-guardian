@@ -4,7 +4,7 @@ export type PanelStatus = 'healthy' | 'warning' | 'fault' | 'offline';
 
 export interface Alert {
   id: string;
-  alertId?: string | null;  // ALERT ID-AK-001 format
+  alertId?: string | null;  // ALT-001 format
   zone: string;
   row: number;
   status: 'warning' | 'fault';
