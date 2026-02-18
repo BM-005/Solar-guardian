@@ -109,6 +109,10 @@ export default function Analytics() {
     }
 
     fetchData();
+    const intervalId = window.setInterval(fetchData, 60000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
   }, []);
 
   if (loading) {

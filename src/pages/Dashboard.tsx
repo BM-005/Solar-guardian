@@ -53,6 +53,7 @@ interface LiveStatusData {
   latestDeviceSeenAt: string | null;
   averageVoltage: number;
   averageCurrentMa: number;
+  totalCurrentMa: number;
   totalPowerMw: number;
   panelGenerationKw?: number;
   panelAvgEfficiency?: number;
@@ -219,7 +220,11 @@ export default function Dashboard() {
         // Then fetch secondary data (weather, power history) in parallel
         const criticalDataPromises = Promise.all([
           fetchWithTimeout('/api/analytics/dashboard', 10000).catch(e => {
-            console.error('❌ Metrics fetch failed:', e);
+            console.error('Metrics fetch failed:', e);
+            return { ok: false } as Response;
+          }),
+          fetchWithTimeout('/api/technicians', 10000).catch(e => {
+            console.error('Technicians fetch failed:', e);
             return { ok: false } as Response;
           }),
           fetchWithTimeout('/api/panels/live-status', 10000).catch(e => {
@@ -233,7 +238,7 @@ export default function Dashboard() {
         ]);
 
         // Wait for critical data first
-        const [metricsRes, liveStatusRes, rowHealthRes] = await criticalDataPromises;
+        const [metricsRes, techniciansRes, liveStatusRes, rowHealthRes] = await criticalDataPromises;
         
         // Then fetch secondary data (weather, power) in parallel - these can load in background
         const secondaryDataPromises = Promise.all([
@@ -375,6 +380,18 @@ export default function Dashboard() {
           console.warn('❌ [Dashboard] Metrics API returned not ok:', metricsRes.status);
         }
 
+        let techniciansAvailableCount: number | null = null;
+        if (techniciansRes.ok) {
+          try {
+            const technicians = await techniciansRes.json();
+            if (Array.isArray(technicians)) {
+              techniciansAvailableCount = technicians.filter((tech: { status?: string }) => tech.status === 'available').length;
+            }
+          } catch (e) {
+            console.warn('Failed to parse technicians data:', e);
+          }
+        }
+
         let liveMetricsPatch: Partial<DashboardMetrics> = {};
         if (liveStatusRes.ok) {
           try {
@@ -393,6 +410,7 @@ export default function Dashboard() {
               latestDeviceSeenAt: statusData.latestDeviceSeenAt ?? null,
               averageVoltage: statusData.averageVoltage ?? 0,
               averageCurrentMa: statusData.averageCurrentMa ?? 0,
+              totalCurrentMa: statusData.totalCurrentMa ?? 0,
               totalPowerMw: statusData.totalPowerMw ?? 0,
               panelGenerationKw: statusData.panelGenerationKw ?? 0,
               panelAvgEfficiency: statusData.panelAvgEfficiency ?? 0,
@@ -405,7 +423,7 @@ export default function Dashboard() {
               warningPanels: parsedLiveStatus.warningPanels,
               faultPanels: parsedLiveStatus.faultPanels,
               offlinePanels: parsedLiveStatus.offlinePanels,
-              currentGeneration: parsedLiveStatus.currentGenerationKw,
+              currentGeneration: Math.max(0, parsedLiveStatus.totalCurrentMa / 1000),
               efficiency: parsedLiveStatus.avgEfficiency,
             };
           } catch (e) {
@@ -477,6 +495,11 @@ export default function Dashboard() {
         const mergedMetrics: DashboardMetrics = {
           ...metrics,
           ...liveMetricsPatch,
+          availableTechnicians:
+            techniciansAvailableCount !== null
+              ? techniciansAvailableCount
+              : (liveMetricsPatch.availableTechnicians ?? metrics.availableTechnicians),
+          currentGeneration: Math.max(0, (liveMetricsPatch.currentGeneration ?? metrics.currentGeneration)),
         };
 
         // Update state with fetched critical data
@@ -515,7 +538,7 @@ export default function Dashboard() {
     fetchData(true);
     const intervalId = window.setInterval(() => {
       fetchData();
-    }, 30000); // Refresh every 30 seconds
+    }, 60000); // Refresh every 1 minute
 
     return () => {
       window.clearInterval(intervalId);
@@ -586,8 +609,11 @@ export default function Dashboard() {
         />
         <MetricCard
           title="Current Generation"
-          value={metrics.currentGeneration / 1000}
-          suffix="kW"
+          value={metrics.currentGeneration}
+          suffix="A"
+          valueFormatter={(value) =>
+            value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 6 })
+          }
           icon={Zap}
           animate={false}
         />
@@ -639,3 +665,4 @@ export default function Dashboard() {
     </div>
   );
 }
+

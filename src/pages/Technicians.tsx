@@ -113,6 +113,10 @@ export default function Technicians() {
       }
     }
     fetchData();
+    const intervalId = window.setInterval(fetchData, 60000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
   }, []);
 
   const totalTechnicians = technicians.length;

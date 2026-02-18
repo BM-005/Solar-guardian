@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -35,6 +35,9 @@ import { usePiReceiver } from '@/hooks/usePiReceiver';
 interface SolarScanFromAPI {
   id: string;
   backendId?: string;
+  alertId?: string | null;
+  panelId?: string | null;
+  rowNumber?: number | null;
   timestamp: string;
   priority: 'HIGH' | 'MEDIUM' | 'NORMAL';
   status: 'pending' | 'processed' | 'archived';
@@ -145,6 +148,11 @@ export default function Scans() {
   
   const [piUrlInput, setPiUrlInput] = useState(serverUrl);
   const [sourceFilter, setSourceFilter] = useState<'all' | 'api' | 'pi'>('all');
+  const piScansRef = useRef(piScans);
+
+  useEffect(() => {
+    piScansRef.current = piScans;
+  }, [piScans]);
 
   const fetchScans = async () => {
     try {
@@ -158,6 +166,16 @@ export default function Scans() {
       if (response.ok) {
         const data = await response.json();
         setScans(data);
+
+        // Drop stale live Pi scans that no longer exist in persisted scans.
+        // This keeps Scans in sync after backend converts/deletes scans into tickets.
+        const persistedScanIds = new Set<string>(data.map((scan: SolarScanFromAPI) => scan.id));
+        piScansRef.current.forEach((piScan) => {
+          const persistedId = piScan.backendId || (piScan.id.startsWith('pi-') ? null : piScan.id);
+          if (persistedId && !persistedScanIds.has(persistedId)) {
+            removePiScan(piScan.id);
+          }
+        });
       }
     } catch (err) {
       console.warn('Failed to fetch scans:', err);
@@ -181,6 +199,13 @@ export default function Scans() {
   useEffect(() => {
     fetchScans();
     fetchStats();
+    const intervalId = window.setInterval(() => {
+      fetchScans();
+      fetchStats();
+    }, 60000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
   }, [statusFilter]);
 
   const handleViewScan = (scan: SolarScanFromAPI) => {
@@ -247,7 +272,7 @@ export default function Scans() {
   };
 
   // Combine API scans with Pi scans for display
-  const allScans = [...piScans, ...scans];
+  const allScans = [...piScans, ...scans].filter((scan) => scan.priority !== 'NORMAL');
   
   // Add source indicator to each scan
   const scansWithSource = allScans.map(scan => ({
@@ -273,6 +298,31 @@ export default function Scans() {
 
   const getDisplayTimestamp = (scan: SolarScanFromAPI) => {
     return scan.createdAt || scan.updatedAt || scan.timestamp;
+  };
+
+  const getScanSequence = (scan: SolarScanFromAPI) => {
+    const idx = scansWithSource.findIndex((s) => s.id === scan.id);
+    return idx >= 0 ? idx + 1 : 0;
+  };
+
+  const getDisplayDeviceName = () => 'Drone';
+
+  const getDisplayScannerId = (scan: SolarScanFromAPI) => {
+    const seq = getScanSequence(scan);
+    return `SD-${String(seq).padStart(3, '0')}`;
+  };
+
+  const getPanelIdSummary = (scan: SolarScanFromAPI) => {
+    if (scan.panelId) return scan.panelId;
+    const panelIds = [...new Set((scan.panelDetections || []).map((p) => p.panelNumber).filter(Boolean))];
+    if (panelIds.length === 0) return 'N/A';
+    if (panelIds.length <= 3) return panelIds.join(', ');
+    return `${panelIds.slice(0, 3).join(', ')} +${panelIds.length - 3}`;
+  };
+
+  const getRowNumber = (scan: SolarScanFromAPI) => {
+    if (typeof scan.rowNumber === 'number') return scan.rowNumber;
+    return 'N/A';
   };
 
   if (loading) {
@@ -473,7 +523,11 @@ export default function Scans() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Scan ID</label>
-                  <p className="mt-1 text-sm font-mono">{selectedScan.id.slice(0, 8)}...</p>
+                  <p className="mt-1 text-sm font-mono">{getDisplayScannerId(selectedScan)}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Alert ID</label>
+                  <p className="mt-1 text-sm font-mono">{selectedScan.alertId || 'N/A'}</p>
                 </div>
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Timestamp</label>
@@ -497,11 +551,19 @@ export default function Scans() {
                 </div>
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Device</label>
-                  <p className="mt-1">{selectedScan.deviceName || selectedScan.deviceId || 'Unknown'}</p>
+                  <p className="mt-1">{getDisplayDeviceName()}</p>
                 </div>
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Total Panels</label>
                   <p className="mt-1">{selectedScan.totalPanels}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Panel ID</label>
+                  <p className="mt-1">{getPanelIdSummary(selectedScan)}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Row Number</label>
+                  <p className="mt-1">{getRowNumber(selectedScan)}</p>
                 </div>
               </div>
 
@@ -705,10 +767,11 @@ export default function Scans() {
                       )} />
                     </div>
                     <div>
-                      <p className="font-semibold">{scan.deviceName || 'Unknown Device'}</p>
+                      <p className="font-semibold">{getDisplayDeviceName()}</p>
                       <p className="text-sm text-muted-foreground">
                         {getRelativeTime(getDisplayTimestamp(scan))}
                       </p>
+                      <p className="text-xs text-muted-foreground">{getDisplayScannerId(scan)}</p>
                     </div>
                   </div>
 
@@ -727,16 +790,12 @@ export default function Scans() {
                       <span>{scan.dustyPanelCount} dusty</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      {scan.isPiScan && (
-                        <Badge variant="outline" className="bg-blue-500/10 text-blue-500 border-blue-500/30">
-                          LIVE
-                        </Badge>
-                      )}
-                      {scan.severity && (
-                        <Badge className={severityColors[scan.severity] || severityColors.LOW}>
-                          {scan.severity}
-                        </Badge>
-                      )}
+                      <span className="text-muted-foreground">Panel ID:</span>
+                      <span>{getPanelIdSummary(scan)}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-muted-foreground">Row:</span>
+                      <span>{getRowNumber(scan)}</span>
                     </div>
                   </div>
 
@@ -762,5 +821,7 @@ export default function Scans() {
     </div>
   );
 }
+
+
 
 

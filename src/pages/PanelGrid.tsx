@@ -123,7 +123,7 @@ export default function PanelGrid() {
     }
     
     fetchPanels();
-    const intervalId = window.setInterval(fetchPanels, 30000);
+    const intervalId = window.setInterval(fetchPanels, 60000);
 
     return () => {
       isMounted = false;

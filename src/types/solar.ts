@@ -190,6 +190,9 @@ export interface PanelDetection {
 export interface SolarScan {
   id: string;
   backendId?: string;
+  alertId?: string | null;
+  panelId?: string | null;
+  rowNumber?: number | null;
   timestamp: string;
   priority: 'HIGH' | 'MEDIUM' | 'NORMAL';
   status: ScanStatus;
@@ -268,6 +271,9 @@ export interface PiPanelCrop {
 
 export interface PiAnalysisResult {
   id?: string;
+  alert_id?: string;
+  panel_id?: string;
+  row_number?: number;
   capture_id: string;
   timestamp: string;
   received_at?: string;
@@ -317,6 +323,9 @@ export function convertPiResultToSolarScan(piResult: PiAnalysisResult): SolarSca
   return {
     id: `pi-${piResult.capture_id}`,
     backendId: piResult.id,
+    alertId: piResult.alert_id ?? null,
+    panelId: piResult.panel_id ?? null,
+    rowNumber: typeof piResult.row_number === 'number' ? piResult.row_number : null,
     timestamp: piResult.received_at || piResult.timestamp,
     priority: piResult.report.priority,
     status: 'pending',

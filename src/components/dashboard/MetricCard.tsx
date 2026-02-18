@@ -6,6 +6,7 @@ import { LucideIcon } from 'lucide-react';
 interface MetricCardProps {
   title: string;
   value: number;
+  valueFormatter?: (value: number) => string;
   suffix?: string;
   prefix?: string;
   icon: LucideIcon;
@@ -20,6 +21,7 @@ interface MetricCardProps {
 export function MetricCard({
   title,
   value,
+  valueFormatter,
   suffix = '',
   prefix = '',
   icon: Icon,
@@ -76,7 +78,7 @@ export function MetricCard({
             <div className="mt-2 flex flex-wrap items-baseline gap-1">
               {prefix && <span className="text-base text-muted-foreground">{prefix}</span>}
               <span className="break-all text-2xl font-bold tracking-tight sm:text-3xl">
-                {displayValue.toLocaleString()}
+                {valueFormatter ? valueFormatter(displayValue) : displayValue.toLocaleString()}
               </span>
               {suffix && <span className="text-xs text-muted-foreground sm:text-sm">{suffix}</span>}
             </div>

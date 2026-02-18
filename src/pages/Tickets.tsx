@@ -128,11 +128,15 @@ export default function Tickets() {
       }
     }
     fetchData();
+    const intervalId = window.setInterval(fetchData, 60000);
 
     // Refetch when window gets focus to update counts after assignments from other pages
     const handleFocus = () => fetchData();
     window.addEventListener('focus', handleFocus);
-    return () => window.removeEventListener('focus', handleFocus);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      window.clearInterval(intervalId);
+    };
   }, []);
 
   const ticketCounts = {

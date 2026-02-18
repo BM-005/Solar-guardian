@@ -29,8 +29,8 @@ import { Button } from '@/components/ui/button';
 
 const mainNavItems = [
   { title: 'Dashboard', url: '/', icon: LayoutDashboard },
-  { title: 'Alerts', url: '/alerts', icon: AlertTriangle },
   { title: 'Panel Grid', url: '/panels', icon: Grid3X3 },
+  { title: 'Alerts', url: '/alerts', icon: AlertTriangle },
   { title: 'Scans', url: '/scans', icon: Scan },
   { title: 'Tickets', url: '/tickets', icon: Ticket },
   { title: 'Technicians', url: '/technicians', icon: Users },

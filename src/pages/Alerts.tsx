@@ -27,6 +27,10 @@ export default function Alerts() {
         }
 
         fetchAlerts();
+        const intervalId = window.setInterval(fetchAlerts, 60000);
+        return () => {
+            window.clearInterval(intervalId);
+        };
     }, []);
 
     const handleDismiss = async (alertId: string) => {

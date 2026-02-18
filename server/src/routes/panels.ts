@@ -325,7 +325,7 @@ router.get('/live-status', async (_req: Request, res: Response) => {
         }
       }
       const effectiveVoltage = online ? (device?.latestVoltage ?? 0) : 0;
-      const effectiveCurrentMa = online ? (device?.latestCurrentMa ?? 0) : 0;
+      const effectiveCurrentMa = online ? Math.max(0, (device?.latestCurrentMa ?? 0)) : 0;
       const effectivePowerMw = online ? (device?.latestPowerMw ?? 0) : 0;
 
       return {
@@ -346,7 +346,7 @@ router.get('/live-status', async (_req: Request, res: Response) => {
       .reduce((sum, device) => sum + device.powerMw, 0);
     const totalPowerMw = devices.reduce((sum, device) => sum + device.powerMw, 0);
     const totalVoltage = devices.reduce((sum, device) => sum + device.voltage, 0);
-    const totalCurrentMa = devices.reduce((sum, device) => sum + device.currentMa, 0);
+    const totalCurrentMa = Math.max(0, devices.reduce((sum, device) => sum + Math.max(0, device.currentMa), 0));
     const currentGenerationKwFromEsp = onlinePowerMw / 1_000_000;
     const panelMaxOutputMap = new Map(mappedPanels.map((panel) => [panel.panelId, panel.maxOutput]));
     const onlineMappedPanelIds = Array.from(onlineDeviceIds).flatMap((deviceId) => deviceToPanelMap[deviceId] || []);
@@ -405,6 +405,7 @@ router.get('/live-status', async (_req: Request, res: Response) => {
       latestDeviceSeenAt: latestSeenAt,
       averageVoltage: deviceIds.length > 0 ? totalVoltage / deviceIds.length : 0,
       averageCurrentMa: deviceIds.length > 0 ? totalCurrentMa / deviceIds.length : 0,
+      totalCurrentMa,
       totalPowerMw,
       devices,
       powerHistory30s,

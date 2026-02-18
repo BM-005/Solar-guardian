@@ -572,6 +572,11 @@ router.post('/scan/:scanId/process', async (req: Request, res: Response) => {
       },
     });
 
+    // Scan has been converted to a ticket workflow, so remove it from scans.
+    await prisma.solarScan.delete({
+      where: { id: scan.id },
+    });
+
     res.json({
       incidentId,
       scanId: scan.id,
