@@ -4,7 +4,7 @@ import { createFaultTicketAndAssignment, generateIncidentId } from './automation
 
 const router = Router();
 
-// Generate sequential alert ID in ALERT ID-AK-XXX format
+// Generate sequential alert ID in ALT-XXX format
 const generateAlertId = async (): Promise<string> => {
   try {
     // Get the latest alert to determine the next number
@@ -15,8 +15,8 @@ const generateAlertId = async (): Promise<string> => {
 
     let nextNumber = 1;
     if (latestAlert?.alertId) {
-      // Extract number from formats like ALERT ID-AK-xxx
-      const match = latestAlert.alertId.match(/ALERT ID-AK-(\d+)/i);
+      // Extract number from formats like ALT-xxx
+      const match = latestAlert.alertId.match(/ALT-(\d+)/i);
       if (match) {
         nextNumber = parseInt(match[1], 10) + 1;
       } else {
@@ -25,12 +25,12 @@ const generateAlertId = async (): Promise<string> => {
       }
     }
 
-    // Format as ALERT ID-AK-001, ALERT ID-AK-002, etc.
-    return `ALERT ID-AK-${nextNumber.toString().padStart(3, '0')}`;
+    // Format as ALT-001, ALT-002, etc.
+    return `ALT-${nextNumber.toString().padStart(3, '0')}`;
   } catch (error) {
     // Fallback to timestamp-based if database query fails
     console.error('Error generating alert ID, using fallback:', error);
-    return `ALERT ID-AK-${Date.now().toString().slice(-6)}`;
+    return `ALT-${Date.now().toString().slice(-6)}`;
   }
 };
 
