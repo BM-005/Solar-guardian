@@ -56,6 +56,11 @@ type PiPanelCropInput = {
   status?: 'CLEAN' | 'DUSTY' | 'FAULTY' | 'UNKNOWN';
   has_dust?: boolean;
   image_b64?: string;
+  thermal_image_b64?: string;
+  x1?: number;
+  y1?: number;
+  x2?: number;
+  y2?: number;
 };
 
 // ── FIX: added thermal_stats field (Pi sends this instead of thermal) ─────────
@@ -139,6 +144,11 @@ type PiResultForClients = {
     status: 'CLEAN' | 'DUSTY' | 'FAULTY' | 'UNKNOWN';
     has_dust: boolean;
     web_path: string | null;
+    thermal_web_path: string | null;
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
   }>;
 };
 
@@ -327,6 +337,11 @@ io.on('connection', (socket) => {
           const status = crop.status ?? 'UNKNOWN';
           const hasDust = crop.has_dust ?? status === 'DUSTY';
           let webPath: string | null = null;
+          let thermalWebPath: string | null = null;
+          const x1 = Number(crop.x1 ?? 0);
+          const y1 = Number(crop.y1 ?? 0);
+          const x2 = Number(crop.x2 ?? 0);
+          const y2 = Number(crop.y2 ?? 0);
 
           if (crop.image_b64) {
             try {
@@ -339,7 +354,28 @@ io.on('connection', (socket) => {
             }
           }
 
-          panelCropsForClients.push({ panel_number: panelNumber, status, has_dust: hasDust, web_path: webPath });
+          if (crop.thermal_image_b64) {
+            try {
+              const thermalCropFileName = `thermal_panel_${sanitizeFilePart(panelNumber)}_cap${safeCaptureId}_${timestampSuffix}.jpg`;
+              const thermalCropFilePath = path.join(PANEL_CROPS_DIR, thermalCropFileName);
+              fs.writeFileSync(thermalCropFilePath, decodeBase64Image(crop.thermal_image_b64));
+              thermalWebPath = `/api/pi-images/panel_crops/${thermalCropFileName}`;
+            } catch (thermalCropErr) {
+              console.warn(`[Pi] Failed to save thermal crop ${panelNumber}:`, thermalCropErr);
+            }
+          }
+
+          panelCropsForClients.push({
+            panel_number: panelNumber,
+            status,
+            has_dust: hasDust,
+            web_path: webPath,
+            thermal_web_path: thermalWebPath,
+            x1,
+            y1,
+            x2,
+            y2,
+          });
         });
 
         // ── Derive counts + severity ─────────────────────────────────────────
@@ -375,12 +411,23 @@ io.on('connection', (socket) => {
             totalPanels,
             deviceId: data.device_id ?? 'raspberry-pi',
             deviceName: data.device_name ?? 'Raspberry Pi Scanner',
+            aiHealthScore: Math.round(healthScore),
+            aiRecommendation: data.report.recommendation ?? null,
+            aiSummary: data.report.summary ?? null,
+            aiRootCause: data.report.root_cause ?? null,
+            aiImpactAssessment: data.report.impact_assessment ?? null,
+            aiTimeframe: data.report.timeframe ?? null,
+            aiSource: data.report.source ?? null,
+            aiBaselineAware: data.report.baseline_aware ?? null,
+            aiDeviationFromBaseline: data.report.deviation_from_baseline ?? null,
+            aiGenaiInsights: data.report.genai_insights ?? null,
             panelDetections: {
               create: panelCropsForClients.map((crop) => ({
                 panelNumber: crop.panel_number,
                 status: crop.status,
-                x1: 0, y1: 0, x2: 0, y2: 0,
+                x1: crop.x1, y1: crop.y1, x2: crop.x2, y2: crop.y2,
                 cropImageUrl: crop.web_path,
+                thermalCropImageUrl: crop.thermal_web_path || thermalImageWebPath,
                 faultType: crop.has_dust ? 'dust' : null,
                 confidence: null,
               })),

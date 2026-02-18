@@ -75,6 +75,7 @@ interface SolarScanFromAPI {
     x2: number;
     y2: number;
     cropImageUrl: string | null;
+    thermalCropImageUrl?: string | null;
     faultType: string | null;
     confidence: number | null;
     solarPanelId: string | null;
@@ -562,13 +563,25 @@ export default function Scans() {
                               panel.status === 'CLEAN' ? 'border-green-500/40' : 'border-muted'
                           )}
                         >
-                          {panel.cropImageUrl && (
-                            <img
-                              src={panel.cropImageUrl}
-                              alt={`Panel ${panel.panelNumber}`}
-                              className="w-full h-20 object-cover"
-                              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                            />
+                          {(panel.cropImageUrl || panel.thermalCropImageUrl) && (
+                            <div className="grid grid-cols-2 gap-1 p-1">
+                              {panel.cropImageUrl && (
+                                <img
+                                  src={panel.cropImageUrl}
+                                  alt={`Panel ${panel.panelNumber} RGB`}
+                                  className="w-full h-20 object-cover rounded"
+                                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                                />
+                              )}
+                              {panel.thermalCropImageUrl && (
+                                <img
+                                  src={panel.thermalCropImageUrl}
+                                  alt={`Panel ${panel.panelNumber} Thermal`}
+                                  className="w-full h-20 object-cover rounded"
+                                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                                />
+                              )}
+                            </div>
                           )}
                           <div className="flex items-center justify-between px-2 py-1 bg-muted/30">
                             <span className="text-xs font-mono font-semibold">{panel.panelNumber}</span>

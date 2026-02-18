@@ -26,6 +26,7 @@ export interface PanelDetection {
   x2: number;
   y2: number;
   cropImageUrl: string | null;
+  thermalCropImageUrl?: string | null;
   faultType: string | null;
   confidence: number | null;
   solarPanelId: string | null;
@@ -47,7 +48,7 @@ export interface SolarScan {
   riskScore: number | null;
   severity: ScanSeverity | null;
   thermalImageUrl: string | null;
-  rgbImageUrl?: string | null;
+  rgbImageUrl: string | null;
 
   // Summary counts
   dustyPanelCount: number;
@@ -144,6 +145,12 @@ export interface PiPanelCrop {
   has_dust: boolean;
   image_b64?: string;
   web_path?: string | null;
+  thermal_image_b64?: string;
+  thermal_web_path?: string | null;
+  x1?: number;
+  y1?: number;
+  x2?: number;
+  y2?: number;
 }
 
 // Thermal data block — Pi may send this as 'thermal' OR 'thermal_stats'
@@ -257,11 +264,12 @@ export function convertPiResultToSolarScan(piResult: PiAnalysisResult): SolarSca
       scanId: `pi-${piResult.capture_id}`,
       panelNumber: crop.panel_number,
       status: crop.status,
-      x1: 0,
-      y1: 0,
-      x2: 100,
-      y2: 100,
+      x1: crop.x1 ?? 0,
+      y1: crop.y1 ?? 0,
+      x2: crop.x2 ?? 100,
+      y2: crop.y2 ?? 100,
       cropImageUrl: crop.web_path ?? null,
+      thermalCropImageUrl: crop.thermal_web_path ?? thermalUrl ?? null,
       faultType: crop.has_dust ? 'dust' : null,
       confidence: null,
       solarPanelId: null,

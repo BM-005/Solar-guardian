@@ -3,6 +3,22 @@ import prisma from '../db.js';
 
 const router = Router();
 
+const mapScanWithAiReport = (scan: any) => ({
+  ...scan,
+  aiReport: scan.aiHealthScore == null ? null : {
+    healthScore: scan.aiHealthScore,
+    recommendation: scan.aiRecommendation || '',
+    summary: scan.aiSummary || '',
+    rootCause: scan.aiRootCause || '',
+    impactAssessment: scan.aiImpactAssessment || '',
+    timeframe: scan.aiTimeframe || '',
+    source: scan.aiSource || 'fallback',
+    baselineAware: Boolean(scan.aiBaselineAware),
+    deviationFromBaseline: scan.aiDeviationFromBaseline || 'N/A',
+    genaiInsights: scan.aiGenaiInsights || '',
+  },
+});
+
 // =====================================================
 // RASPBERRY PI DATA ENDPOINTS
 // =====================================================
@@ -15,6 +31,7 @@ router.post('/', async (req: Request, res: Response) => {
       priority,
       thermal,
       panels,
+      report,
       deviceId,
       deviceName,
       thermalImage,
@@ -41,6 +58,7 @@ router.post('/', async (req: Request, res: Response) => {
         riskScore: thermal?.risk_score || null,
         severity: thermal?.severity || null,
         thermalImageUrl: thermalImage || null,
+        rgbImageUrl: rgbImage || null,
         
         // Summary counts
         dustyPanelCount,
@@ -50,6 +68,18 @@ router.post('/', async (req: Request, res: Response) => {
         // Device info
         deviceId: deviceId || null,
         deviceName: deviceName || null,
+
+        // GenAI report
+        aiHealthScore: report?.health_score ?? null,
+        aiRecommendation: report?.recommendation || null,
+        aiSummary: report?.summary || null,
+        aiRootCause: report?.root_cause || null,
+        aiImpactAssessment: report?.impact_assessment || null,
+        aiTimeframe: report?.timeframe || null,
+        aiSource: report?.source || null,
+        aiBaselineAware: report?.baseline_aware ?? null,
+        aiDeviationFromBaseline: report?.deviation_from_baseline || null,
+        aiGenaiInsights: report?.genai_insights || null,
       }
     });
 
@@ -67,6 +97,7 @@ router.post('/', async (req: Request, res: Response) => {
               x2: panel.x2 || panel.bbox?.[2] || 0,
               y2: panel.y2 || panel.bbox?.[3] || 0,
               cropImageUrl: panel.crop || panel.cropImageUrl || null,
+              thermalCropImageUrl: panel.thermalCrop || panel.thermalCropImageUrl || thermalImage || null,
               faultType: panel.faultType || null,
               confidence: panel.confidence || null,
             }
@@ -105,7 +136,7 @@ router.get('/', async (req: Request, res: Response) => {
       take: Number(limit)
     });
 
-    res.json(scans);
+    res.json(scans.map(mapScanWithAiReport));
   } catch (error) {
     console.error('Error fetching solar scans:', error);
     res.status(500).json({ error: 'Failed to fetch solar scans' });
@@ -126,7 +157,7 @@ router.get('/latest', async (_req: Request, res: Response) => {
       return res.status(404).json({ error: 'No scans found' });
     }
 
-    res.json(scan);
+    res.json(mapScanWithAiReport(scan));
   } catch (error) {
     console.error('Error fetching latest scan:', error);
     res.status(500).json({ error: 'Failed to fetch latest scan' });
@@ -147,7 +178,7 @@ router.get('/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Scan not found' });
     }
 
-    res.json(scan);
+    res.json(mapScanWithAiReport(scan));
   } catch (error) {
     console.error('Error fetching scan:', error);
     res.status(500).json({ error: 'Failed to fetch scan' });

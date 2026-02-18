@@ -212,6 +212,18 @@ model SolarScan {
   // Source device info
   deviceId        String?  // Raspberry Pi device ID
   deviceName      String?  // e.g., "RPi-Camera-1"
+
+  // GenAI report fields from Raspberry Pi
+  aiHealthScore              Int?
+  aiRecommendation           String?
+  aiSummary                  String?
+  aiRootCause                String?
+  aiImpactAssessment         String?
+  aiTimeframe                String?
+  aiSource                   String?
+  aiBaselineAware            Boolean?
+  aiDeviationFromBaseline    String?
+  aiGenaiInsights            String?
   
   // Relations
   panelDetections PanelDetection[]
@@ -240,6 +252,7 @@ model PanelDetection {
   
   // Cropped image (base64)
   cropImageUrl    String?
+  thermalCropImageUrl String?
   
   // Associated fault (if any)
   faultType       String?

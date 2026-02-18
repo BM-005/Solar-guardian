@@ -249,11 +249,24 @@ export interface SolarScanFromAPI {
     x2: number;
     y2: number;
     cropImageUrl: string | null;
+    thermalCropImageUrl?: string | null;
     faultType: string | null;
     confidence: number | null;
     solarPanelId: string | null;
     createdAt: string;
   }>;
+  aiReport?: {
+    healthScore: number;
+    recommendation: string;
+    summary: string;
+    rootCause: string;
+    impactAssessment: string;
+    timeframe: string;
+    source: string;
+    baselineAware: boolean;
+    deviationFromBaseline: string;
+    genaiInsights: string;
+  } | null;
   createdAt: string;
   updatedAt: string;
 }
