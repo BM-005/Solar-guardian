@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+﻿import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -271,8 +271,49 @@ export default function Scans() {
     }
   };
 
-  // Combine API scans with Pi scans for display
-  const allScans = [...piScans, ...scans].filter((scan) => scan.priority !== 'NORMAL');
+  const getCanonicalScanKey = (scan: SolarScanFromAPI) => {
+    if (scan.backendId) return scan.backendId;
+    if (scan.id.startsWith('pi-')) return scan.id;
+    return scan.id;
+  };
+
+  const getScanCompletenessScore = (scan: SolarScanFromAPI) => {
+    let score = 0;
+    if (scan.rgbImageUrl) score += 2;
+    if (scan.thermalImageUrl) score += 2;
+    if (scan.piReport) score += 3;
+    if (scan.panelDetections?.length) score += 2;
+    if (scan.totalPanels > 0) score += 1;
+    return score;
+  };
+
+  const allScans = Array.from(
+    [...piScans, ...scans]
+      .filter((scan) => scan.priority !== 'NORMAL')
+      .reduce<Map<string, SolarScanFromAPI>>((acc, scan) => {
+        const key = getCanonicalScanKey(scan);
+        const existing = acc.get(key);
+        if (!existing) {
+          acc.set(key, scan);
+          return acc;
+        }
+        const existingScore = getScanCompletenessScore(existing);
+        const nextScore = getScanCompletenessScore(scan);
+        if (nextScore > existingScore) {
+          acc.set(key, scan);
+          return acc;
+        }
+        if (nextScore === existingScore) {
+          const existingTs = new Date(existing.createdAt || existing.updatedAt || existing.timestamp).getTime();
+          const nextTs = new Date(scan.createdAt || scan.updatedAt || scan.timestamp).getTime();
+          if (!Number.isNaN(nextTs) && (Number.isNaN(existingTs) || nextTs >= existingTs)) {
+            acc.set(key, scan);
+          }
+        }
+        return acc;
+      }, new Map())
+      .values()
+  );
   
   // Sort by timestamp (newest first) to get consistent sequence
   const sortedAllScans = [...allScans].sort((a, b) => {
@@ -295,6 +336,8 @@ export default function Scans() {
     
     const searchMatch = 
       scan.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (scan.alertId && scan.alertId.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (scan.panelId && scan.panelId.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (scan.deviceName && scan.deviceName.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (scan.deviceId && scan.deviceId.toLowerCase().includes(searchQuery.toLowerCase()));
     return searchMatch;
@@ -330,6 +373,47 @@ export default function Scans() {
   const getRowNumber = (scan: SolarScanFromAPI) => {
     if (typeof scan.rowNumber === 'number') return scan.rowNumber;
     return 'N/A';
+  };
+
+  const resolveImageUrl = (value?: string | null) => {
+    if (!value) return null;
+    if (value.startsWith('http://') || value.startsWith('https://') || value.startsWith('data:')) {
+      return value;
+    }
+    const base = (import.meta.env.VITE_API_URL || serverUrl || '').replace(/\/$/, '');
+    return base ? `${base}${value.startsWith('/') ? value : `/${value}`}` : value;
+  };
+
+  const getEffectivePiReport = (scan: SolarScanFromAPI) => {
+    if (scan.piReport) return scan.piReport;
+    return {
+      health_score: Math.max(0, Math.min(100, 100 - Number(scan.riskScore ?? 0))),
+      priority: scan.priority,
+      recommendation:
+        scan.severity === 'CRITICAL' || scan.severity === 'HIGH'
+          ? 'IMMEDIATE_INSPECTION'
+          : 'CONTINUE_MONITORING',
+      timeframe:
+        scan.severity === 'CRITICAL' || scan.severity === 'HIGH'
+          ? 'Inspect and service within 24 hours'
+          : 'Next routine inspection cycle',
+      summary:
+        scan.dustyPanelCount > 0
+          ? `${scan.dustyPanelCount} dusty panel(s) detected`
+          : 'Panels appear clean and operating normally',
+      root_cause:
+        scan.dustyPanelCount > 0
+          ? 'Dust accumulation on panel surfaces'
+          : 'No abnormal thermal/panel indicators',
+      impact_assessment:
+        scan.dustyPanelCount > 0
+          ? 'Potential performance degradation if left untreated'
+          : 'No immediate operational impact detected',
+      source: 'fallback',
+      baseline_aware: false,
+      deviation_from_baseline: scan.baselineDelta != null ? `${scan.baselineDelta.toFixed(1)}Â°C` : undefined,
+      genai_insights: undefined,
+    };
   };
 
   if (loading) {
@@ -407,7 +491,7 @@ export default function Scans() {
             <CardContent className="flex items-center justify-between p-6">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Avg Delta</p>
-                <p className="text-3xl font-bold">{stats.avgThermalDelta?.toFixed(1)}°C</p>
+                <p className="text-3xl font-bold">{stats.avgThermalDelta?.toFixed(1)}Â°C</p>
               </div>
               <div className="rounded-xl bg-orange-500/10 p-3">
                 <Thermometer className="h-6 w-6 text-orange-500" />
@@ -583,19 +667,19 @@ export default function Scans() {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div>
                     <label className="text-xs text-muted-foreground">Min Temp</label>
-                    <p className="text-lg font-semibold">{selectedScan.thermalMinTemp?.toFixed(1) || 'N/A'}°C</p>
+                    <p className="text-lg font-semibold">{selectedScan.thermalMinTemp?.toFixed(1) || 'N/A'}Â°C</p>
                   </div>
                   <div>
                     <label className="text-xs text-muted-foreground">Max Temp</label>
-                    <p className="text-lg font-semibold">{selectedScan.thermalMaxTemp?.toFixed(1) || 'N/A'}°C</p>
+                    <p className="text-lg font-semibold">{selectedScan.thermalMaxTemp?.toFixed(1) || 'N/A'}Â°C</p>
                   </div>
                   <div>
                     <label className="text-xs text-muted-foreground">Mean Temp</label>
-                    <p className="text-lg font-semibold">{selectedScan.thermalMeanTemp?.toFixed(1) || 'N/A'}°C</p>
+                    <p className="text-lg font-semibold">{selectedScan.thermalMeanTemp?.toFixed(1) || 'N/A'}Â°C</p>
                   </div>
                   <div>
                     <label className="text-xs text-muted-foreground">Delta</label>
-                    <p className="text-lg font-semibold">{selectedScan.thermalDelta?.toFixed(1) || 'N/A'}°C</p>
+                    <p className="text-lg font-semibold">{selectedScan.thermalDelta?.toFixed(1) || 'N/A'}Â°C</p>
                   </div>
                 </div>
                 <div className="mt-4 flex items-center gap-4">
@@ -620,7 +704,7 @@ export default function Scans() {
                   <div className="mt-4">
                     <label className="text-sm font-medium text-muted-foreground">Thermal Image</label>
                     <img 
-                      src={selectedScan.thermalImageUrl} 
+                      src={resolveImageUrl(selectedScan.thermalImageUrl) || undefined}
                       alt="Thermal" 
                       className="mt-1 block w-full h-auto rounded-md bg-black/40"
                     />
@@ -630,7 +714,7 @@ export default function Scans() {
                   <div className="mt-4">
                     <label className="text-sm font-medium text-muted-foreground">RGB Capture</label>
                     <img
-                      src={selectedScan.rgbImageUrl}
+                      src={resolveImageUrl(selectedScan.rgbImageUrl) || undefined}
                       alt="RGB"
                       className="mt-1 block w-full h-auto rounded-md bg-black/40"
                     />
@@ -658,47 +742,50 @@ export default function Scans() {
                 </div>
               </div>
 
-              {selectedScan.piReport && (
-                <div className="rounded-lg border p-4 space-y-3">
-                  <h4 className="font-medium">Analysis Report</h4>
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <label className="text-xs text-muted-foreground">Recommendation</label>
-                      <p className="mt-1 font-medium">{selectedScan.piReport.recommendation || 'N/A'}</p>
+              {(() => {
+                const report = getEffectivePiReport(selectedScan);
+                return (
+                  <div className="rounded-lg border p-4 space-y-3">
+                    <h4 className="font-medium">Analysis Report</h4>
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <label className="text-xs text-muted-foreground">Recommendation</label>
+                        <p className="mt-1 font-medium">{report.recommendation || 'N/A'}</p>
+                      </div>
+                      <div>
+                        <label className="text-xs text-muted-foreground">Timeframe</label>
+                        <p className="mt-1">{report.timeframe || 'N/A'}</p>
+                      </div>
+                      <div>
+                        <label className="text-xs text-muted-foreground">Source</label>
+                        <p className="mt-1">{report.source || 'N/A'}</p>
+                      </div>
+                      <div>
+                        <label className="text-xs text-muted-foreground">Baseline Delta</label>
+                        <p className="mt-1">{selectedScan.baselineDelta != null ? `${selectedScan.baselineDelta.toFixed(1)}°C` : 'N/A'}</p>
+                      </div>
                     </div>
                     <div>
-                      <label className="text-xs text-muted-foreground">Timeframe</label>
-                      <p className="mt-1">{selectedScan.piReport.timeframe || 'N/A'}</p>
+                      <label className="text-xs text-muted-foreground">Summary</label>
+                      <p className="mt-1 text-sm">{report.summary || 'N/A'}</p>
                     </div>
                     <div>
-                      <label className="text-xs text-muted-foreground">Source</label>
-                      <p className="mt-1">{selectedScan.piReport.source || 'N/A'}</p>
+                      <label className="text-xs text-muted-foreground">Root Cause</label>
+                      <p className="mt-1 text-sm">{report.root_cause || 'N/A'}</p>
                     </div>
                     <div>
-                      <label className="text-xs text-muted-foreground">Baseline Delta</label>
-                      <p className="mt-1">{selectedScan.baselineDelta != null ? `${selectedScan.baselineDelta.toFixed(1)}°C` : 'N/A'}</p>
+                      <label className="text-xs text-muted-foreground">Impact Assessment</label>
+                      <p className="mt-1 text-sm">{report.impact_assessment || 'N/A'}</p>
                     </div>
+                    {report.genai_insights && (
+                      <div>
+                        <label className="text-xs text-muted-foreground">AI Insights</label>
+                        <p className="mt-1 text-sm">{report.genai_insights}</p>
+                      </div>
+                    )}
                   </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground">Summary</label>
-                    <p className="mt-1 text-sm">{selectedScan.piReport.summary || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground">Root Cause</label>
-                    <p className="mt-1 text-sm">{selectedScan.piReport.root_cause || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground">Impact Assessment</label>
-                    <p className="mt-1 text-sm">{selectedScan.piReport.impact_assessment || 'N/A'}</p>
-                  </div>
-                  {selectedScan.piReport.genai_insights && (
-                    <div>
-                      <label className="text-xs text-muted-foreground">AI Insights</label>
-                      <p className="mt-1 text-sm">{selectedScan.piReport.genai_insights}</p>
-                    </div>
-                  )}
-                </div>
-              )}
+                );
+              })()}
 
               {/* Panel Detections */}
               {selectedScan.panelDetections && selectedScan.panelDetections.length > 0 && (

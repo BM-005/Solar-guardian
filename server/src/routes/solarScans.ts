@@ -3,6 +3,39 @@ import prisma from '../db.js';
 import { createFaultTicketAndAssignment, generateIncidentId, normalizeSeverity, priorityFromSeverity } from './automation.js';
 
 const router = Router();
+const DUPLICATE_WINDOW_SECONDS = 120;
+
+const nearlyEqual = (a?: number | null, b?: number | null, epsilon = 0.25) => {
+  if (a == null || b == null) return true;
+  return Math.abs(a - b) <= epsilon;
+};
+
+const isLikelyDuplicateScan = (
+  existing: {
+    deviceId: string | null;
+    totalPanels: number;
+    dustyPanelCount: number;
+    cleanPanelCount: number;
+    thermalMeanTemp: number | null;
+    thermalDelta: number | null;
+  },
+  incoming: {
+    deviceId: string | null;
+    totalPanels: number;
+    dustyPanelCount: number;
+    cleanPanelCount: number;
+    thermalMeanTemp: number | null;
+    thermalDelta: number | null;
+  }
+) => {
+  if ((existing.deviceId || null) !== (incoming.deviceId || null)) return false;
+  if (existing.totalPanels !== incoming.totalPanels) return false;
+  if (existing.dustyPanelCount !== incoming.dustyPanelCount) return false;
+  if (existing.cleanPanelCount !== incoming.cleanPanelCount) return false;
+  if (!nearlyEqual(existing.thermalMeanTemp, incoming.thermalMeanTemp, 0.35)) return false;
+  if (!nearlyEqual(existing.thermalDelta, incoming.thermalDelta, 0.35)) return false;
+  return true;
+};
 
 // =====================================================
 // HELPER FUNCTIONS FOR AUTOMATION
@@ -73,33 +106,85 @@ router.post('/', async (req: Request, res: Response) => {
     // Use onsite sensor temperature as the mean, or fallback to Pi thermal mean
     const avgTemperature = latestWeather?.temperature || thermal?.mean_temp || null;
     
-    const scan = await prisma.solarScan.create({
-      data: {
-        timestamp: timestamp ? new Date(timestamp) : new Date(),
-        priority: priority || 'NORMAL',
-        status: shouldAutoCreateTicket ? 'processing' : 'pending',
-        
-        // Thermal data from Pi camera (for delta/anomaly detection)
-        thermalMinTemp: thermal?.min_temp || null,
-        thermalMaxTemp: thermal?.max_temp || null,
-        // Use onsite ESP sensor temperature as mean (more accurate than thermal camera)
-        thermalMeanTemp: avgTemperature,
-        thermalDelta: thermal?.delta || null,
-        riskScore: thermal?.risk_score || null,
-        severity: severity || null,
-        thermalImageUrl: thermalImage || null,
-        rgbImageUrl: rgbImage || null,
-        
-        // Summary counts
-        dustyPanelCount,
-        cleanPanelCount,
-        totalPanels,
-        
-        // Device info
-        deviceId: deviceId || null,
-        deviceName: deviceName || null,
-      }
+    const deviceIdValue = deviceId || null;
+    const timestampValue = timestamp ? new Date(timestamp) : new Date();
+    const duplicateSince = new Date(timestampValue.getTime() - DUPLICATE_WINDOW_SECONDS * 1000);
+
+    const recentCandidate = await prisma.solarScan.findFirst({
+      where: {
+        deviceId: deviceIdValue,
+        timestamp: { gte: duplicateSince },
+      },
+      include: { panelDetections: true },
+      orderBy: { timestamp: 'desc' },
     });
+
+    const incomingKey = {
+      deviceId: deviceIdValue,
+      totalPanels,
+      dustyPanelCount,
+      cleanPanelCount,
+      thermalMeanTemp: avgTemperature,
+      thermalDelta: thermal?.delta || null,
+    };
+
+    let scan;
+
+    if (recentCandidate && isLikelyDuplicateScan(recentCandidate, incomingKey)) {
+      scan = await prisma.solarScan.update({
+        where: { id: recentCandidate.id },
+        data: {
+          timestamp: timestampValue,
+          priority: priority || recentCandidate.priority || 'NORMAL',
+          status: shouldAutoCreateTicket ? 'processing' : (recentCandidate.status || 'pending'),
+          thermalMinTemp: thermal?.min_temp ?? recentCandidate.thermalMinTemp,
+          thermalMaxTemp: thermal?.max_temp ?? recentCandidate.thermalMaxTemp,
+          thermalMeanTemp: avgTemperature ?? recentCandidate.thermalMeanTemp,
+          thermalDelta: thermal?.delta ?? recentCandidate.thermalDelta,
+          riskScore: thermal?.risk_score ?? recentCandidate.riskScore,
+          severity: severity || recentCandidate.severity || null,
+          thermalImageUrl: thermalImage || recentCandidate.thermalImageUrl,
+          rgbImageUrl: rgbImage || recentCandidate.rgbImageUrl,
+          dustyPanelCount,
+          cleanPanelCount,
+          totalPanels,
+          deviceName: deviceName || recentCandidate.deviceName || null,
+          updatedAt: new Date(),
+        }
+      });
+
+      if (panels && panels.length > 0) {
+        await prisma.panelDetection.deleteMany({ where: { scanId: scan.id } });
+      }
+    } else {
+      scan = await prisma.solarScan.create({
+        data: {
+          timestamp: timestampValue,
+          priority: priority || 'NORMAL',
+          status: shouldAutoCreateTicket ? 'processing' : 'pending',
+          
+          // Thermal data from Pi camera (for delta/anomaly detection)
+          thermalMinTemp: thermal?.min_temp || null,
+          thermalMaxTemp: thermal?.max_temp || null,
+          // Use onsite ESP sensor temperature as mean (more accurate than thermal camera)
+          thermalMeanTemp: avgTemperature,
+          thermalDelta: thermal?.delta || null,
+          riskScore: thermal?.risk_score || null,
+          severity: severity || null,
+          thermalImageUrl: thermalImage || null,
+          rgbImageUrl: rgbImage || null,
+          
+          // Summary counts
+          dustyPanelCount,
+          cleanPanelCount,
+          totalPanels,
+          
+          // Device info
+          deviceId: deviceIdValue,
+          deviceName: deviceName || null,
+        }
+      });
+    }
     
     // Log which temperature source was used
     if (latestWeather) {

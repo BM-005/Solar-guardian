@@ -153,6 +153,39 @@ const getSeverityFromHealthScore = (healthScore: number): 'CRITICAL' | 'HIGH' | 
   return 'LOW';
 };
 
+const SCAN_DUPLICATE_WINDOW_SECONDS = 120;
+const nearlyEqual = (a?: number | null, b?: number | null, epsilon = 0.35) => {
+  if (a == null || b == null) return true;
+  return Math.abs(a - b) <= epsilon;
+};
+
+const isLikelyDuplicatePiScan = (
+  existing: {
+    deviceId: string | null;
+    totalPanels: number;
+    dustyPanelCount: number;
+    cleanPanelCount: number;
+    thermalMeanTemp: number | null;
+    thermalDelta: number | null;
+  },
+  incoming: {
+    deviceId: string | null;
+    totalPanels: number;
+    dustyPanelCount: number;
+    cleanPanelCount: number;
+    thermalMeanTemp: number | null;
+    thermalDelta: number | null;
+  }
+) => {
+  if ((existing.deviceId || null) !== (incoming.deviceId || null)) return false;
+  if (existing.totalPanels !== incoming.totalPanels) return false;
+  if (existing.dustyPanelCount !== incoming.dustyPanelCount) return false;
+  if (existing.cleanPanelCount !== incoming.cleanPanelCount) return false;
+  if (!nearlyEqual(existing.thermalMeanTemp, incoming.thermalMeanTemp)) return false;
+  if (!nearlyEqual(existing.thermalDelta, incoming.thermalDelta)) return false;
+  return true;
+};
+
 // Health check
 app.get('/health', (_, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -395,27 +428,55 @@ io.on('connection', (socket) => {
       const thermalMeanTemp = data.thermal?.mean_temp ?? null;
       const thermalDelta = data.thermal?.delta ?? null;
 
-      const savedScan = await prisma.solarScan.create({
-        data: {
-          // Use server receive time to avoid timezone skew from Pi-local timestamps.
-          timestamp: receivedAt,
-          priority,
-          status: 'pending',
-          riskScore,
-          severity,
-          thermalMinTemp,
-          thermalMaxTemp,
-          thermalMeanTemp,
-          thermalDelta,
-          thermalImageUrl: thermalImageWebPath,
-          rgbImageUrl: mainImageWebPath,
-          dustyPanelCount,
-          cleanPanelCount,
-          totalPanels,
-          deviceId: data.device_id ?? 'raspberry-pi',
-          deviceName: data.device_name ?? 'Raspberry Pi Scanner',
-          panelDetections: {
-            create: panelCropsForClients.map((crop) => ({
+      const deviceIdValue = data.device_id ?? 'raspberry-pi';
+      const duplicateSince = new Date(receivedAt.getTime() - SCAN_DUPLICATE_WINDOW_SECONDS * 1000);
+      const recentCandidate = await prisma.solarScan.findFirst({
+        where: {
+          deviceId: deviceIdValue,
+          timestamp: { gte: duplicateSince },
+        },
+        include: { panelDetections: true },
+        orderBy: { timestamp: 'desc' },
+      });
+
+      const incomingKey = {
+        deviceId: deviceIdValue,
+        totalPanels,
+        dustyPanelCount,
+        cleanPanelCount,
+        thermalMeanTemp,
+        thermalDelta,
+      };
+
+      let savedScan;
+
+      if (recentCandidate && isLikelyDuplicatePiScan(recentCandidate, incomingKey)) {
+        savedScan = await prisma.solarScan.update({
+          where: { id: recentCandidate.id },
+          data: {
+            timestamp: receivedAt,
+            priority: priority || recentCandidate.priority || 'NORMAL',
+            status: recentCandidate.status || 'pending',
+            riskScore: riskScore ?? recentCandidate.riskScore,
+            severity: severity ?? recentCandidate.severity,
+            thermalMinTemp: thermalMinTemp ?? recentCandidate.thermalMinTemp,
+            thermalMaxTemp: thermalMaxTemp ?? recentCandidate.thermalMaxTemp,
+            thermalMeanTemp: thermalMeanTemp ?? recentCandidate.thermalMeanTemp,
+            thermalDelta: thermalDelta ?? recentCandidate.thermalDelta,
+            thermalImageUrl: thermalImageWebPath || recentCandidate.thermalImageUrl,
+            rgbImageUrl: mainImageWebPath || recentCandidate.rgbImageUrl,
+            dustyPanelCount,
+            cleanPanelCount,
+            totalPanels,
+            deviceName: data.device_name ?? recentCandidate.deviceName ?? 'Raspberry Pi Scanner',
+            updatedAt: new Date(),
+          },
+        });
+        await prisma.panelDetection.deleteMany({ where: { scanId: savedScan.id } });
+        if (panelCropsForClients.length > 0) {
+          await prisma.panelDetection.createMany({
+            data: panelCropsForClients.map((crop) => ({
+              scanId: savedScan.id,
               panelNumber: crop.panel_number,
               status: crop.status,
               x1: 0,
@@ -426,9 +487,44 @@ io.on('connection', (socket) => {
               faultType: crop.has_dust ? 'dust' : null,
               confidence: null,
             })),
+          });
+        }
+      } else {
+        savedScan = await prisma.solarScan.create({
+          data: {
+            // Use server receive time to avoid timezone skew from Pi-local timestamps.
+            timestamp: receivedAt,
+            priority,
+            status: 'pending',
+            riskScore,
+            severity,
+            thermalMinTemp,
+            thermalMaxTemp,
+            thermalMeanTemp,
+            thermalDelta,
+            thermalImageUrl: thermalImageWebPath,
+            rgbImageUrl: mainImageWebPath,
+            dustyPanelCount,
+            cleanPanelCount,
+            totalPanels,
+            deviceId: deviceIdValue,
+            deviceName: data.device_name ?? 'Raspberry Pi Scanner',
+            panelDetections: {
+              create: panelCropsForClients.map((crop) => ({
+                panelNumber: crop.panel_number,
+                status: crop.status,
+                x1: 0,
+                y1: 0,
+                x2: 0,
+                y2: 0,
+                cropImageUrl: crop.web_path,
+                faultType: crop.has_dust ? 'dust' : null,
+                confidence: null,
+              })),
+            },
           },
-        },
-      });
+        });
+      }
 
       const resultForClients: PiResultForClients = {
         id: savedScan.id,
