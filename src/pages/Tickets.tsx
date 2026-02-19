@@ -51,6 +51,7 @@ interface TicketFromAPI {
   zone: string | null;  // Zone name (e.g., "A", "B")
   row: number | null;   // Row number
   alertId: string | null; // Alert ID from scan
+  scanId: string | null; // Scan ID that triggered the ticket
   notes: Array<{
     id: string;
     authorId: string;
