@@ -483,11 +483,7 @@ export default function Tickets() {
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Row ID</label>
                   <p className="mt-1">
-                    {ticketDetails.row !== null && ticketDetails.row !== undefined 
-                      ? `ROW ${ticketDetails.row}` 
-                      : ticketDetails.panel?.row !== undefined 
-                        ? `ROW ${ticketDetails.panel.row}` 
-                        : 'N/A'}
+                    {ticketDetails.panel?.row !== undefined ? `ROW ${ticketDetails.panel.row}` : 'N/A'}
                   </p>
                 </div>
                 <div>
