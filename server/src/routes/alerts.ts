@@ -3,21 +3,22 @@ import prisma from '../db.js';
 
 const router = Router();
 
-// Generate sequential alert ID in ALT-XXX format (always starting from ALT-001)
-const generateAlertId = async (): Promise<string> => {
-  try {
-    // Always start fresh from ALT-001
-    const alertCount = await prisma.alert.count();
-    // Start from 1 and increment (ignoring old data)
-    const nextNumber = (alertCount % 999) + 1;
+const ALERT_ID_PATTERN = /^ALT-(\d+)$/i;
 
-    // Format as ALT-001, ALT-002, etc.
-    return `ALT-${nextNumber.toString().padStart(3, '0')}`;
-  } catch (error) {
-    // Fallback to timestamp-based if database query fails
-    console.error('Error generating alert ID, using fallback:', error);
-    return `ALT-${Date.now().toString().slice(-6)}`;
-  }
+// Generate sequential alert ID in ALT-XXX format (ALT-001, ALT-002, ...)
+const generateAlertId = async (): Promise<string> => {
+  const existing = await prisma.alert.findMany({
+    where: { alertId: { startsWith: 'ALT-' } },
+    select: { alertId: true },
+  });
+
+  const maxNumber = existing.reduce((max, row) => {
+    const match = row.alertId?.match(ALERT_ID_PATTERN);
+    const parsed = match ? Number.parseInt(match[1], 10) : 0;
+    return Number.isFinite(parsed) && parsed > max ? parsed : max;
+  }, 0);
+  const nextNumber = maxNumber + 1;
+  return `ALT-${String(nextNumber).padStart(3, '0')}`;
 };
 
 // Get all active alerts
@@ -84,19 +85,33 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     // Create new alert with generated alertId
-    const newAlertId = await generateAlertId();
-    const alert = await prisma.alert.create({
-      data: {
-        alertId: newAlertId,
-        zone,
-        row,
-        status,
-        message: message || null,
-        dismissed: false,
-        scanId: scanId || null,
-        ticketId: ticketId || null,
-      },
-    });
+    let alert;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const newAlertId = await generateAlertId();
+      try {
+        alert = await prisma.alert.create({
+          data: {
+            alertId: newAlertId,
+            zone,
+            row,
+            status,
+            message: message || null,
+            dismissed: false,
+            scanId: scanId || null,
+            ticketId: ticketId || null,
+          },
+        });
+        break;
+      } catch (createError: any) {
+        if (createError?.code !== 'P2002') {
+          throw createError;
+        }
+      }
+    }
+
+    if (!alert) {
+      return res.status(500).json({ error: 'Failed to allocate unique alert ID' });
+    }
 
     res.json(alert);
   } catch (error) {
