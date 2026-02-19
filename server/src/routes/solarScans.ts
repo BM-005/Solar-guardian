@@ -57,8 +57,9 @@ const normalizeAlertId = (value: string | null): string | null => {
   return cleaned.toUpperCase();
 };
 
-const findAlertIdInObject = (value: unknown): string | null => {
+const findAlertIdInObject = (value: unknown, fromAlertKey = false): string | null => {
   if (typeof value === 'string') {
+    if (!fromAlertKey) return null;
     const direct = normalizeAlertId(value);
     if (direct && /^ALT-\d+$/i.test(direct)) return direct;
     const match = value.match(/\bALT[-_ ]?(\d+)\b/i);
@@ -67,7 +68,7 @@ const findAlertIdInObject = (value: unknown): string | null => {
   }
   if (Array.isArray(value)) {
     for (const item of value) {
-      const nested = findAlertIdInObject(item);
+      const nested = findAlertIdInObject(item, fromAlertKey);
       if (nested) return nested;
     }
     return null;
@@ -75,13 +76,12 @@ const findAlertIdInObject = (value: unknown): string | null => {
   if (value && typeof value === 'object') {
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
       const key = k.toLowerCase().replace(/[\s_-]/g, '');
-      if (key.includes('alert') && key.includes('id')) {
-        const fromKey = findAlertIdInObject(v);
-        if (fromKey) return fromKey;
-      }
-    }
-    for (const nestedValue of Object.values(value as Record<string, unknown>)) {
-      const nested = findAlertIdInObject(nestedValue);
+      const nextFromAlertKey =
+        fromAlertKey ||
+        key === 'alert' ||
+        (key.includes('alert') &&
+          (key.includes('id') || key.includes('number') || key.includes('no')));
+      const nested = findAlertIdInObject(v, nextFromAlertKey);
       if (nested) return nested;
     }
   }
@@ -364,6 +364,9 @@ router.post('/', async (req: Request, res: Response) => {
           timestamp: timestampValue,
           priority: priority || 'NORMAL',
           status: shouldAutoCreateTicket ? 'processing' : 'pending',
+          alertId: alertIdValue,
+          panelId: panelIdValue,
+          rowNumber: rowNumberValue,
           
           // Thermal data from Pi camera (for delta/anomaly detection)
           thermalMinTemp: thermal?.min_temp || null,
@@ -388,7 +391,7 @@ router.post('/', async (req: Request, res: Response) => {
       });
     }
 
-    if (alertIdValue) {
+    if (hasExplicitAlertId && alertIdValue) {
       const alertRecord = await prisma.alert.findFirst({
         where: {
           alertId: alertIdValue,
@@ -398,14 +401,10 @@ router.post('/', async (req: Request, res: Response) => {
         select: { id: true, alertId: true, row: true, createdAt: true },
       });
 
-      if (
-        alertRecord &&
-        (rowNumberValue == null || alertRecord.row === rowNumberValue)
-      ) {
+      if (alertRecord) {
         const scanCountForAlert = await prisma.solarScan.count({
           where: {
             alertId: alertIdValue,
-            rowNumber: alertRecord.row,
             timestamp: { gte: alertRecord.createdAt },
           },
         });
