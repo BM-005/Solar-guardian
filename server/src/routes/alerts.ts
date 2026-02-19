@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import prisma from '../db.js';
 
 const router = Router();
+const STRICT_ALERT_ID_REGEX = /^ALT-(\d{3})$/i;
 
 // Generate sequential alert ID in ALT-XXX format (ALT-001, ALT-002, ...)
 export const generateAlertId = async (): Promise<string> => {
@@ -11,7 +12,8 @@ export const generateAlertId = async (): Promise<string> => {
   });
 
   const maxNumber = existing.reduce((max, row) => {
-    const match = row.alertId?.match(/^ALT-(\d+)$/i);
+    // Only participate in numbering if ID is strict ALT-001 style.
+    const match = row.alertId?.match(STRICT_ALERT_ID_REGEX);
     const parsed = match ? Number.parseInt(match[1], 10) : 0;
     return Number.isFinite(parsed) && parsed > max ? parsed : max;
   }, 0);
@@ -40,6 +42,31 @@ const createAlertWithSequentialId = async (
   throw new Error('Failed to allocate unique alert ID');
 };
 
+const isStrictAlertId = (value?: string | null): boolean => {
+  if (!value) return false;
+  return STRICT_ALERT_ID_REGEX.test(value.trim());
+};
+
+const ensureSequentialAlertId = async (alert: { id: string; alertId?: string | null }) => {
+  if (isStrictAlertId(alert.alertId)) return alert.alertId ?? null;
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const candidate = await generateAlertId();
+    try {
+      await prisma.alert.update({
+        where: { id: alert.id },
+        data: { alertId: candidate },
+      });
+      return candidate;
+    } catch (updateError: any) {
+      if (updateError?.code !== 'P2002') {
+        throw updateError;
+      }
+    }
+  }
+  return alert.alertId ?? null;
+};
+
 // Get all active alerts
 router.get('/', async (_req: Request, res: Response) => {
   try {
@@ -51,7 +78,22 @@ router.get('/', async (_req: Request, res: Response) => {
         createdAt: 'desc',
       },
     });
-    res.json(alerts);
+
+    const normalizedAlerts = await Promise.all(
+      alerts.map(async (alert) => {
+        const nextAlertId = await ensureSequentialAlertId({
+          id: alert.id,
+          alertId: alert.alertId,
+        });
+        if (nextAlertId === alert.alertId) return alert;
+        return {
+          ...alert,
+          alertId: nextAlertId,
+        };
+      })
+    );
+
+    res.json(normalizedAlerts);
   } catch (error) {
     console.error('Error fetching alerts:', error);
     res.status(500).json({ error: 'Failed to fetch alerts' });
@@ -77,29 +119,32 @@ router.post('/', async (req: Request, res: Response) => {
       },
       select: {
         id: true,
+        alertId: true,
         zone: true,
         row: true,
         status: true,
         message: true,
         scanId: true,
         ticketId: true,
-      }
+      },
     });
 
     if (existingAlert) {
+      const reassignedAlertId = await ensureSequentialAlertId(existingAlert);
+
       // Alert already exists - update status and message (don't create duplicate)
       const updatedAlert = await prisma.alert.update({
         where: { id: existingAlert.id },
         data: {
+          ...(reassignedAlertId ? { alertId: reassignedAlertId } : {}),
           status, // Update to new status (fault/warning/healthy)
           message: message || existingAlert.message,
           scanId: scanId || existingAlert.scanId,
           ticketId: ticketId || existingAlert.ticketId,
         },
       });
-      
+
       // Tickets are created only from scan automation flow.
-      
       return res.json(updatedAlert);
     }
 
@@ -188,7 +233,7 @@ router.post('/sync', async (req: Request, res: Response) => {
 
     // Group by zone and row
     const rowStatuses = new Map<string, string>();
-    panels.forEach(panel => {
+    panels.forEach((panel) => {
       if (panel.status === 'warning' || panel.status === 'fault') {
         const key = `${panel.zone.name}-${panel.row}`;
         // If any panel in the row has a fault, the row is in fault status
@@ -205,19 +250,17 @@ router.post('/sync', async (req: Request, res: Response) => {
       where: { dismissed: false },
     });
 
-    const existingAlertKeys = new Set(
-      existingAlerts.map(a => `${a.zone}-${a.row}-${a.status}`)
-    );
+    const existingAlertKeys = new Set(existingAlerts.map((a) => `${a.zone}-${a.row}-${a.status}`));
 
     // Create new alerts for rows that don't have an alert
     const newAlerts: Array<{ zone: string; row: number; status: string }> = [];
     rowStatuses.forEach((status, key) => {
       const [zone, rowStr] = key.split('-');
-      const row = parseInt(rowStr);
-      const alertKey = `${zone}-${row}-${status}`;
+      const rowValue = Number.parseInt(rowStr, 10);
+      const alertKey = `${zone}-${rowValue}-${status}`;
 
       if (!existingAlertKeys.has(alertKey)) {
-        newAlerts.push({ zone, row, status });
+        newAlerts.push({ zone, row: rowValue, status });
       }
     });
 
@@ -232,16 +275,18 @@ router.post('/sync', async (req: Request, res: Response) => {
     );
 
     const updatedAlerts = await prisma.alert.findMany({
-      where: { 
-        id: { in: createdAlerts.map(a => a.id) }
+      where: {
+        id: { in: createdAlerts.map((a) => a.id) },
       },
     });
 
     // Dismiss alerts for rows that are now healthy
-    const currentRowKeys = new Set(Array.from(rowStatuses.keys()).map(k => {
-      const [zone, row] = k.split('-');
-      return `${zone}-${row}`;
-    }));
+    const currentRowKeys = new Set(
+      Array.from(rowStatuses.keys()).map((k) => {
+        const [zone, row] = k.split('-');
+        return `${zone}-${row}`;
+      })
+    );
 
     for (const alert of existingAlerts) {
       const alertKey = `${alert.zone}-${alert.row}`;
@@ -264,4 +309,3 @@ router.post('/sync', async (req: Request, res: Response) => {
 });
 
 export default router;
-
