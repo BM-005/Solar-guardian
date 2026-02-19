@@ -487,6 +487,7 @@ router.post('/', async (req: Request, res: Response) => {
           const newAlertId = await generateAlertId();
           await prisma.alert.create({
             data: {
+              alertId: newAlertId,
               zone: zoneName,
               row: rowNum,
               status: alertStatus,

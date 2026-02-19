@@ -19,6 +19,27 @@ export const generateAlertId = async (): Promise<string> => {
   return `ALT-${String(nextNumber).padStart(3, '0')}`;
 };
 
+const createAlertWithSequentialId = async (
+  data: Omit<Parameters<typeof prisma.alert.create>[0]['data'], 'alertId'>
+) => {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const newAlertId = await generateAlertId();
+    try {
+      return await prisma.alert.create({
+        data: {
+          ...data,
+          alertId: newAlertId,
+        },
+      });
+    } catch (createError: any) {
+      if (createError?.code !== 'P2002') {
+        throw createError;
+      }
+    }
+  }
+  throw new Error('Failed to allocate unique alert ID');
+};
+
 // Get all active alerts
 router.get('/', async (_req: Request, res: Response) => {
   try {
@@ -83,33 +104,15 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     // Create new alert with generated alertId
-    let alert;
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const newAlertId = await generateAlertId();
-      try {
-        alert = await prisma.alert.create({
-          data: {
-            alertId: newAlertId,
-            zone,
-            row,
-            status,
-            message: message || null,
-            dismissed: false,
-            scanId: scanId || null,
-            ticketId: ticketId || null,
-          },
-        });
-        break;
-      } catch (createError: any) {
-        if (createError?.code !== 'P2002') {
-          throw createError;
-        }
-      }
-    }
-
-    if (!alert) {
-      return res.status(500).json({ error: 'Failed to allocate unique alert ID' });
-    }
+    const alert = await createAlertWithSequentialId({
+      zone,
+      row,
+      status,
+      message: message || null,
+      dismissed: false,
+      scanId: scanId || null,
+      ticketId: ticketId || null,
+    });
 
     res.json(alert);
   } catch (error) {
@@ -220,16 +223,12 @@ router.post('/sync', async (req: Request, res: Response) => {
 
     // Create alerts with generated alertIds
     const createdAlerts = await Promise.all(
-      newAlerts.map(async (alertData) => {
-        const newAlertId = await generateAlertId();
-        return prisma.alert.create({
-          data: {
-            alertId: newAlertId,
-            ...alertData,
-            dismissed: false,
-          },
-        });
-      })
+      newAlerts.map(async (alertData) =>
+        createAlertWithSequentialId({
+          ...alertData,
+          dismissed: false,
+        })
+      )
     );
 
     const updatedAlerts = await prisma.alert.findMany({
