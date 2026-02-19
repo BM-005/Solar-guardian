@@ -78,7 +78,8 @@ export const generateTicketNumber = async (): Promise<string> => {
     });
 
     let maxNumber = 0;
-    const patterns = [/FAULT ID-FK-(\d+)/i, /FK-(\d+)/i, /TCK-(\d+)/i, /TK-(\d+)/i];
+    // Support TK- format (e.g., TK-001, TK-002, etc.)
+    const patterns = [/TK-(\d+)/i, /FAULT ID-FK-(\d+)/i, /FK-(\d+)/i, /TCK-(\d+)/i];
 
     for (const ticket of recentTickets) {
       if (!ticket.ticketNumber) continue;
@@ -93,11 +94,11 @@ export const generateTicketNumber = async (): Promise<string> => {
       }
     }
 
-    return `FK-${(maxNumber + 1).toString().padStart(3, '0')}`;
+    return `TK-${(maxNumber + 1).toString().padStart(3, '0')}`;
   } catch (error) {
     // Fallback to timestamp-based if database query fails
     console.error('Error generating ticket number, using fallback:', error);
-    return `FK-${Date.now().toString().slice(-6)}`;
+    return `TK-${Date.now().toString().slice(-6)}`;
   }
 };
 
