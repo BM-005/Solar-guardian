@@ -445,15 +445,15 @@ export default function PanelGrid() {
                                 onClick={() => setSelectedRowKey(rowGroup.key)}
                                 className={cn(
                                   'h-[36px] w-[116px] rounded-[4px] border px-0 transition-colors',
-                                  selectedRowKey === rowGroup.key ? 'border-primary bg-primary/5' : 'bg-background',
+                                  selectedRowKey === rowGroup.key ? 'border-primary ring-1 ring-primary/40' : 'bg-background',
                                 )}
                               >
                                 <div className="flex items-center gap-0.5">
                                   {rowGroup.panels.map((panel) => (
                                     <div
                                       key={panel.id}
-                                      className={cn('h-[36px] w-[36px] rounded-[3px]', statusColors[panel.status] || 'bg-gray-400')}
-                                      title={`${panel.panelId} - ${panel.status}`}
+                                      className={cn('h-[36px] w-[36px] rounded-[3px]', statusColors[rowGroup.status] || 'bg-gray-400')}
+                                      title={`${panel.panelId} - row status: ${rowGroup.status}`}
                                     />
                                   ))}
                                 </div>
