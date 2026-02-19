@@ -364,7 +364,7 @@ export default function Scans() {
             <CardContent className="flex items-center justify-between p-6">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Pending</p>
-                <p className="text-3xl font-bold">{stats.pendingScans}</p>
+                <p className="text-3xl font-bold">{filteredScans.filter(s => s.status === 'pending').length}</p>
               </div>
               <div className="rounded-xl bg-yellow-500/10 p-3">
                 <Clock className="h-6 w-6 text-yellow-500" />
@@ -376,7 +376,7 @@ export default function Scans() {
             <CardContent className="flex items-center justify-between p-6">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Processed</p>
-                <p className="text-3xl font-bold">{stats.processedScans}</p>
+                <p className="text-3xl font-bold">{filteredScans.filter(s => s.status === 'processed').length}</p>
               </div>
               <div className="rounded-xl bg-green-500/10 p-3">
                 <CheckCircle className="h-6 w-6 text-green-500" />
@@ -388,7 +388,7 @@ export default function Scans() {
             <CardContent className="flex items-center justify-between p-6">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Critical</p>
-                <p className="text-3xl font-bold text-red-500">{stats.criticalScans}</p>
+                <p className="text-3xl font-bold text-red-500">{filteredScans.filter(s => s.severity === 'CRITICAL').length}</p>
               </div>
               <div className="rounded-xl bg-red-500/10 p-3">
                 <AlertTriangle className="h-6 w-6 text-red-500" />
