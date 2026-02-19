@@ -483,9 +483,12 @@ router.post('/scan/:scanId/process', async (req: Request, res: Response) => {
     }
 
     const severity = normalizeSeverity(scan.severity?.toLowerCase());
+    const normalizedPriority = String(scan.priority || 'NORMAL').toUpperCase();
     const hasFaulty = scan.panelDetections.some((detection) => detection.status === 'FAULTY');
     const hasDust = scan.panelDetections.some((detection) => detection.status === 'DUSTY') || scan.dustyPanelCount > 0;
-    const shouldCreateTicket = body.forceTicket || hasFaulty || hasDust || ['critical', 'high', 'medium'].includes(severity);
+    const hasScanIssues = hasFaulty || hasDust;
+    const shouldCreateTicket =
+      hasScanIssues && (Boolean(body.forceTicket) || normalizedPriority === 'HIGH' || normalizedPriority === 'MEDIUM');
 
     const incidentId = body.incidentId?.trim() || generateIncidentId();
 

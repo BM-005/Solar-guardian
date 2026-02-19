@@ -92,9 +92,16 @@ router.post('/', async (req: Request, res: Response) => {
     const hasFaulty = panels?.some((p: any) => p.status === 'FAULTY') || false;
     const severity = thermal?.severity || 'NORMAL';
     const normalizedSeverity = normalizeSeverity(severity);
+    const normalizedPriority = String(priority || 'NORMAL').toUpperCase();
+    const hasScanIssues = hasFaulty || dustyPanelCount > 0;
 
-    // Auto-create ticket for every new scan unless explicitly disabled.
-    const shouldAutoCreateTicket = autoProcess !== false && totalPanels > 0;
+    // Determine if we should automatically create a ticket
+    // Tickets should be created only for scan issues (dusty/faulty)
+    // and only for medium/high scan priority.
+    const shouldAutoCreateTicket =
+      autoProcess !== false &&
+      hasScanIssues &&
+      (normalizedPriority === 'MEDIUM' || normalizedPriority === 'HIGH');
 
 // Create SolarScan record
     // Get average temperature from onsite ESP sensor (WeatherData table)
@@ -278,8 +285,13 @@ router.post('/', async (req: Request, res: Response) => {
           const panel = await resolvePanel();
           
           if (panel) {
-            const incidentId = generateIncidentId();
-            const derivedFaultType = hasFaulty ? 'thermal_fault' : dustyPanelCount >= AUTO_TICKET_THRESHOLD ? 'dust_accumulation' : 'scan_anomaly';
+              const incidentId = generateIncidentId();
+              const derivedFaultType = hasFaulty ? 'thermal_fault' : dustyPanelCount >= AUTO_TICKET_THRESHOLD ? 'dust_accumulation' : 'scan_anomaly';
+              const effectiveFaultType = hasFaulty
+                ? 'thermal_fault'
+                : dustyPanelCount > 0
+                ? 'dust_accumulation'
+                : derivedFaultType;
             
             
             // This creates: Fault â†’ Ticket â†’ Technician Assignment â†’ activeTickets Increment
@@ -294,9 +306,9 @@ router.post('/', async (req: Request, res: Response) => {
             const alertStatus = hasFaulty || normalizedSeverity === 'critical' ? 'fault' : 'warning';
             
             automationResult = await createFaultTicketAndAssignment({
-              incidentId,
-              panelId: panel.id,
-              faultType: derivedFaultType,
+                incidentId,
+                panelId: panel.id,
+                faultType: effectiveFaultType,
               severity: normalizedSeverity,
               detectedAt: scan.timestamp,
               description: `Automated scan processing - ${hasFaulty ? 'thermal fault detected' : 'dust accumulation: ' + dustyPanelCount + ' panels'}`,

@@ -617,8 +617,11 @@ io.on('connection', (socket) => {
       // =====================================================
       const AUTO_TICKET_THRESHOLD = 3;
       const normalizedSeverity = normalizeSeverity(severity); // This converts MODERATE->medium, CRITICAL->critical, etc.
+      const normalizedPriority = String(priority || 'NORMAL').toUpperCase();
       const hasFaulty = panelCropsForClients.some((crop) => crop.status === 'FAULTY');
-      const shouldAutoCreateTicket = totalPanels > 0;
+      const hasScanIssues = hasFaulty || dustyPanelCount > 0;
+      const shouldAutoCreateTicket =
+        hasScanIssues && (normalizedPriority === 'MEDIUM' || normalizedPriority === 'HIGH');
 
       if (shouldAutoCreateTicket) {
         // Update scan status to processing
@@ -643,12 +646,17 @@ io.on('connection', (socket) => {
                 : dustyPanelCount >= AUTO_TICKET_THRESHOLD
                 ? 'dust_accumulation'
                 : 'scan_anomaly';
+              const effectiveFaultType = hasFaulty
+                ? 'thermal_fault'
+                : dustyPanelCount > 0
+                ? 'dust_accumulation'
+                : derivedFaultType;
 
 
               const automationResult = await createFaultTicketAndAssignment({
                 incidentId,
                 panelId: panel.id,
-                faultType: derivedFaultType,
+                faultType: effectiveFaultType,
                 severity: normalizedSeverity,
                 detectedAt: savedScan.timestamp,
                 description: `Automated scan processing - ${

@@ -1,6 +1,5 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../db.js';
-import { createFaultTicketAndAssignment, generateIncidentId } from './automation.js';
 
 const router = Router();
 
@@ -20,61 +19,6 @@ const generateAlertId = async (): Promise<string> => {
     return `ALT-${Date.now().toString().slice(-6)}`;
   }
 };
-
-// Helper function to create ticket for an alert
-async function createTicketForAlert(alert: { zone: string; row: number; status: string; id: string }) {
-  try {
-    // Find a panel in this zone and row
-    const panel = await prisma.solarPanel.findFirst({
-      where: {
-        zone: { name: alert.zone },
-        row: alert.row,
-      },
-      include: { zone: true },
-    });
-
-    if (!panel) {
-      console.warn(`No panel found for Zone ${alert.zone}, Row ${alert.row} - cannot create ticket`);
-      return null;
-    }
-
-    const incidentId = generateIncidentId();
-    const severity = alert.status === 'fault' ? 'critical' : 'medium';
-    const faultType = alert.status === 'fault' ? 'voltage_fault' : 'low_voltage_warning';
-    const description = `Auto-generated from alert: Zone ${alert.zone}, Row ${alert.row} - ${alert.status} status`;
-
-    const result = await createFaultTicketAndAssignment({
-      incidentId,
-      panelId: panel.id,
-      faultType,
-      severity,
-      detectedAt: new Date(),
-      description,
-      aiConfidence: 100,
-      aiAnalysis: `Alert triggered for ${alert.status} status on Zone ${alert.zone} Row ${alert.row}`,
-      recommendedAction: alert.status === 'fault' 
-        ? 'Immediate inspection required - critical voltage fault detected'
-        : 'Schedule inspection - low voltage warning detected',
-      locationX: panel.column * 10,
-      locationY: panel.row * 10,
-      zone: alert.zone,
-      row: alert.row,
-      status: alert.status,
-    });
-
-    // Link the ticket to the alert
-    await prisma.alert.update({
-      where: { id: alert.id },
-      data: { ticketId: result.ticketId },
-    });
-
-    console.log(`✅ Ticket created for alert ${alert.id}: ${result.ticketNumber}, assigned to technician: ${result.assignedTechnicianId || 'none'}`);
-    return result;
-  } catch (error) {
-    console.error('Error creating ticket for alert:', error);
-    return null;
-  }
-}
 
 // Get all active alerts
 router.get('/', async (_req: Request, res: Response) => {
@@ -124,7 +68,6 @@ router.post('/', async (req: Request, res: Response) => {
 
     if (existingAlert) {
       // Alert already exists - update status and message (don't create duplicate)
-      const previousStatus = existingAlert.status;
       const updatedAlert = await prisma.alert.update({
         where: { id: existingAlert.id },
         data: {
@@ -135,27 +78,7 @@ router.post('/', async (req: Request, res: Response) => {
         },
       });
       
-      // If status changed to warning/fault and no ticket exists, create one
-      if ((status === 'warning' || status === 'fault') && !updatedAlert.ticketId) {
-        await createTicketForAlert({
-          zone: updatedAlert.zone,
-          row: updatedAlert.row,
-          status: updatedAlert.status,
-          id: updatedAlert.id,
-        });
-      }
-      
-      // If status changed from warning to fault, create a NEW ticket for the fault
-      // This ensures a new ticket is created when severity escalates
-      if (previousStatus === 'warning' && status === 'fault') {
-        console.log(`⚠️ Status escalated from warning to fault for Zone ${updatedAlert.zone}, Row ${updatedAlert.row} - creating new ticket`);
-        await createTicketForAlert({
-          zone: updatedAlert.zone,
-          row: updatedAlert.row,
-          status: 'fault',
-          id: updatedAlert.id,
-        });
-      }
+      // Tickets are created only from scan automation flow.
       
       return res.json(updatedAlert);
     }
@@ -174,22 +97,6 @@ router.post('/', async (req: Request, res: Response) => {
         ticketId: ticketId || null,
       },
     });
-
-    // Auto-create ticket for warning and fault alerts
-    if (status === 'warning' || status === 'fault') {
-      const ticketResult = await createTicketForAlert({
-        zone: alert.zone,
-        row: alert.row,
-        status: alert.status,
-        id: alert.id,
-      });
-      
-      // Fetch updated alert with ticketId
-      const updatedAlert = await prisma.alert.findUnique({
-        where: { id: alert.id },
-      });
-      return res.json(updatedAlert);
-    }
 
     res.json(alert);
   } catch (error) {
@@ -312,19 +219,6 @@ router.post('/sync', async (req: Request, res: Response) => {
       })
     );
 
-    // Auto-create tickets for new warning and fault alerts
-    for (const alert of createdAlerts) {
-      if (alert.status === 'warning' || alert.status === 'fault') {
-        await createTicketForAlert({
-          zone: alert.zone,
-          row: alert.row,
-          status: alert.status,
-          id: alert.id,
-        });
-      }
-    }
-
-    // Fetch updated alerts with ticketIds
     const updatedAlerts = await prisma.alert.findMany({
       where: { 
         id: { in: createdAlerts.map(a => a.id) }

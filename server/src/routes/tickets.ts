@@ -59,10 +59,12 @@ router.get('/', async (req: Request, res: Response) => {
   try {
     const { status, priority } = req.query;
 
-    const where: {
-      status?: string;
-      priority?: string;
-    } = {};
+    const where: any = {
+      OR: [
+        { droneImageUrl: { not: null } },
+        { thermalImageUrl: { not: null } },
+      ],
+    };
 
     if (status) {
       where.status = status as string;

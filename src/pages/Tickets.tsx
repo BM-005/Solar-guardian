@@ -465,9 +465,9 @@ export default function Tickets() {
                 <div className="grid gap-3 md:grid-cols-2">
                   <div>
                     <label className="text-sm font-medium text-muted-foreground">Scan RGB</label>
-                    {ticketScanDetails?.rgbImageUrl ? (
+                    {(ticketScanDetails?.rgbImageUrl || ticketDetails?.droneImageUrl) ? (
                       <img
-                        src={ticketScanDetails.rgbImageUrl}
+                        src={ticketScanDetails?.rgbImageUrl || ticketDetails?.droneImageUrl}
                         alt="Scan RGB"
                         className="mt-1 w-full h-40 object-cover rounded-md"
                       />
@@ -477,9 +477,9 @@ export default function Tickets() {
                   </div>
                   <div>
                     <label className="text-sm font-medium text-muted-foreground">Scan Thermal</label>
-                    {ticketScanDetails?.thermalImageUrl ? (
+                    {(ticketScanDetails?.thermalImageUrl || ticketDetails?.thermalImageUrl) ? (
                       <img
-                        src={ticketScanDetails.thermalImageUrl}
+                        src={ticketScanDetails?.thermalImageUrl || ticketDetails?.thermalImageUrl}
                         alt="Scan Thermal"
                         className="mt-1 w-full h-40 object-cover rounded-md"
                       />
