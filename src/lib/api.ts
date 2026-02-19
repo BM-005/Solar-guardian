@@ -4,6 +4,42 @@
 
 const API_BASE = '';
 
+// Backend config - fetched dynamically to handle shared backend scenarios
+let backendConfig: BackendConfig | null = null;
+
+export interface BackendConfig {
+  backendUrl: string;
+  apiVersion: string;
+}
+
+// Fetch backend config - useful for teammates connecting to shared backend
+// This ensures image URLs resolve correctly regardless of build-time VITE_API_URL
+export async function getBackendConfig(): Promise<BackendConfig | null> {
+  if (backendConfig) return backendConfig;
+  
+  try {
+    const response = await fetch('/api/config');
+    if (response.ok) {
+      backendConfig = await response.json();
+      return backendConfig;
+    }
+  } catch (error) {
+    console.warn('Failed to fetch backend config:', error);
+  }
+  return null;
+}
+
+// Get the backend URL for image resolution
+export function getBackendUrl(): string {
+  return backendConfig?.backendUrl || API_BASE;
+}
+
+// Force refresh backend config (useful after reconnection)
+export async function refreshBackendConfig(): Promise<void> {
+  backendConfig = null;
+  await getBackendConfig();
+}
+
 // Types
 export interface Panel {
   id: string;

@@ -6,6 +6,7 @@ import { Server } from 'socket.io';
 import prisma from './db.js';
 import path from 'path';
 import fs from 'fs';
+import { networkInterfaces } from 'os';
 import { createFaultTicketAndAssignment, generateIncidentId, normalizeSeverity, generateTicketNumber } from './routes/automation.js';
 
 // Routes
@@ -35,6 +36,23 @@ const io = new Server(httpServer, {
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 const MAX_PI_RESULTS = 50;
+
+// Get the server's actual IP address at startup
+let serverIpAddress = 'localhost';
+
+// Try to get the actual IP address
+const nets = networkInterfaces();
+for (const name of Object.keys(nets)) {
+  for (const net of nets[name] || []) {
+    // Skip internal (127.0.0.1) and non-IPv4 addresses
+    if (net.family === 'IPv4' && !net.internal) {
+      serverIpAddress = net.address;
+      break;
+    }
+  }
+  if (serverIpAddress !== 'localhost') break;
+}
+console.log(`Server IP Address: ${serverIpAddress}`);
 
 // Directory to save received images from Pi
 const PI_SAVE_DIR = path.join(process.cwd(), 'received_from_pi');
@@ -189,6 +207,23 @@ const isLikelyDuplicatePiScan = (
 // Health check
 app.get('/health', (_, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// API Config - returns backend URL for dynamic image resolution
+// This helps teammates access images when connecting to a shared backend
+app.get('/api/config', (req, res) => {
+  // Use the server's actual IP address (determined at startup)
+  // This ensures teammates get the correct backend URL
+  const host = serverIpAddress;
+  const port = process.env.PORT || 3000;
+  
+  // Check if it's https (if behind reverse proxy with SSL termination)
+  const protocol = req.protocol === 'https' ? 'https' : 'http';
+  
+  res.json({
+    backendUrl: `${protocol}://${host}:${port}`,
+    apiVersion: 'v1',
+  });
 });
 
 // API Routes

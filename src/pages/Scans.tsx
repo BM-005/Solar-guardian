@@ -31,6 +31,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { usePiReceiver } from '@/hooks/usePiReceiver';
+import { getBackendConfig, getBackendUrl } from '@/lib/api';
 
 interface SolarScanFromAPI {
   id: string;
@@ -149,6 +150,11 @@ export default function Scans() {
   const [piUrlInput, setPiUrlInput] = useState(serverUrl);
   const [sourceFilter, setSourceFilter] = useState<'all' | 'api' | 'pi'>('all');
   const piScansRef = useRef(piScans);
+
+  // Fetch backend config on mount to enable dynamic image URL resolution
+  useEffect(() => {
+    getBackendConfig().catch(console.warn);
+  }, []);
 
   useEffect(() => {
     piScansRef.current = piScans;
@@ -315,18 +321,38 @@ export default function Scans() {
       .values()
   );
   
-  // Sort by timestamp (newest first) to get consistent sequence
+  // Sort by timestamp (newest first)
   const sortedAllScans = [...allScans].sort((a, b) => {
     const dateA = new Date(a.createdAt || a.updatedAt || a.timestamp).getTime();
     const dateB = new Date(b.createdAt || b.updatedAt || b.timestamp).getTime();
     return dateB - dateA;
   });
   
-  // Add source indicator to each scan
+  // Extract max sequence number from existing scan IDs (e.g., "scan-007" -> 7)
+  // This ensures new scans get the next available number
+  const maxSequenceFromIds = sortedAllScans.reduce((max, scan) => {
+    // Try to extract number from various ID formats
+    const id = scan.id || '';
+    const match = id.match(/(\d+)$/);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      if (!isNaN(num) && num > max) {
+        return num;
+      }
+    }
+    return max;
+  }, 0);
+  
+  // Use the higher of: count of non-normal scans OR max sequence from IDs
+  // This ensures continuity - new scans get next available number
+  const baseSequence = Math.max(sortedAllScans.length, maxSequenceFromIds);
+  
+  // Add source indicator to each scan - assign sequence so newest gets highest number
+  // This way new scans get incrementing SD numbers, not SD-001
   const scansWithSource = sortedAllScans.map((scan, index) => ({
     ...scan,
     isPiScan: scan.id.startsWith('pi-'),
-    _sequence: index + 1, // Continuous sequence number
+    _sequence: baseSequence - index, // Newest = highest number
   }));
   
   const filteredScans = scansWithSource.filter(scan => {
@@ -377,10 +403,13 @@ export default function Scans() {
 
   const resolveImageUrl = (value?: string | null) => {
     if (!value) return null;
+    // Already a full URL, return as-is
     if (value.startsWith('http://') || value.startsWith('https://') || value.startsWith('data:')) {
       return value;
     }
-    const base = (import.meta.env.VITE_API_URL || serverUrl || '').replace(/\/$/, '');
+    // Use dynamic backend URL from config endpoint (works for teammates on shared backend)
+    // Fallback to VITE_API_URL or serverUrl for local development
+    const base = getBackendUrl() || (import.meta.env.VITE_API_URL || serverUrl || '').replace(/\/$/, '');
     return base ? `${base}${value.startsWith('/') ? value : `/${value}`}` : value;
   };
 
@@ -416,6 +445,10 @@ export default function Scans() {
     };
   };
 
+  // Calculate stats from filtered scans (excluding NORMAL priority)
+  const displayedPendingCount = filteredScans.filter(scan => scan.status === 'pending').length;
+  const displayedProcessedCount = filteredScans.filter(scan => scan.status === 'processed').length;
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-[calc(100vh-8rem)]">
@@ -442,8 +475,8 @@ export default function Scans() {
           <Card>
             <CardContent className="flex items-center justify-between p-6">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Total Scans</p>
-                <p className="text-3xl font-bold">{stats.totalScans}</p>
+                <p className="text-sm font-medium text-muted-foreground">Displayed Scans</p>
+                <p className="text-3xl font-bold">{filteredScans.length}</p>
               </div>
               <div className="rounded-xl bg-blue-500/10 p-3">
                 <Camera className="h-6 w-6 text-blue-500" />
@@ -455,7 +488,7 @@ export default function Scans() {
             <CardContent className="flex items-center justify-between p-6">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Pending</p>
-                <p className="text-3xl font-bold">{stats.pendingScans}</p>
+                <p className="text-3xl font-bold">{displayedPendingCount}</p>
               </div>
               <div className="rounded-xl bg-yellow-500/10 p-3">
                 <Clock className="h-6 w-6 text-yellow-500" />
