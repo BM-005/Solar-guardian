@@ -31,9 +31,6 @@ import {
 interface TicketFromAPI {
   id: string;
   ticketNumber: string;
-  scanId?: string | null;
-  alertId?: string | null;
-  rowNumber?: number | null;
   scanPanelId?: string | null;
   panelId: string | null;
   faultId: string | null;
@@ -53,6 +50,8 @@ interface TicketFromAPI {
   thermalImageUrl: string | null;
   zone: string | null;  // Zone name (e.g., "A", "B")
   row: number | null;   // Row number
+  alertId: string | null; // Alert ID from scan
+  scanId: string | null; // Scan ID that triggered the ticket
   notes: Array<{
     id: string;
     authorId: string;
@@ -222,21 +221,6 @@ export default function Tickets() {
   };
   const getPanelId = (ticket: TicketFromAPI) =>
     ticket.scanPanelId || ticketPanelById[ticket.id] || ticket.panel?.panelId || 'N/A';
-  const getScanAlertId = () =>
-    selectedTicket?.alertId ||
-    ticketScanDetails?.alertId ||
-    ticketScanDetails?.alert_id ||
-    ticketAlertMeta?.alertId ||
-    'N/A';
-  const getScanRowId = () => {
-    const row =
-      selectedTicket?.rowNumber ??
-      ticketScanDetails?.rowNumber ??
-      ticketScanDetails?.row_number ??
-      ticketDetails?.row ??
-      ticketDetails?.panel?.row;
-    return row !== undefined && row !== null ? `ROW ${row}` : 'N/A';
-  };
   const getTicketSequence = (ticketNumber?: string | null) => {
     if (!ticketNumber) return null;
     const match = ticketNumber.match(/(?:FAULT ID-)?(?:FK|TK|TCK)-(\d+)/i);
@@ -276,18 +260,18 @@ export default function Tickets() {
     setLoadingDetails(true);
     setTicketAlertMeta(null);
     setTicketScanDetails(null);
-
+    
     // Use alertId directly from ticket if available (from the list)
     if (ticket.alertId) {
       setTicketAlertMeta({ alertId: ticket.alertId, scanId: null });
     }
-
+    
     try {
       const response = await fetch(`/api/tickets/${ticket.id}`);
       if (response.ok) {
         const details = await response.json();
         setTicketDetails(details);
-
+        
         // Use alertId from details if available (has higher fidelity)
         if (details.alertId) {
           setTicketAlertMeta({ alertId: details.alertId, scanId: details.scanId || null });
@@ -295,20 +279,9 @@ export default function Tickets() {
       } else {
         setTicketDetails(ticket); // fallback to list data
       }
-
-      // Prefer direct ticket->scan lookup so alert ID works even after alert row is auto-deleted.
-      try {
-        if (ticket.scanId) {
-          const scanRes = await fetch(`/api/solar-scans/${ticket.scanId}`);
-          if (scanRes.ok) {
-            const scan = await scanRes.json();
-            setTicketScanDetails(scan);
-            setTicketAlertMeta({
-              alertId: scan?.alertId || scan?.alert_id || null,
-              scanId: ticket.scanId,
-            });
-          }
-        } else {
+      // Only try to fetch alert/scan details if no alertId in ticket
+      if (!ticket.alertId) {
+        try {
           const alertsRes = await fetch('/api/alerts');
           if (alertsRes.ok) {
             const alerts = await alertsRes.json();
@@ -326,9 +299,9 @@ export default function Tickets() {
               }
             }
           }
+        } catch (err) {
+          console.warn('Failed to fetch alert/scan details:', err);
         }
-      } catch (err) {
-        console.warn('Failed to fetch alert/scan details:', err);
       }
     } catch (err) {
       console.error('Failed to fetch ticket details:', err);
@@ -510,11 +483,21 @@ export default function Tickets() {
                 </div>
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Row ID</label>
-                  <p className="mt-1">{getScanRowId()}</p>
+                  <p className="mt-1">
+                    {ticketDetails.row !== null && ticketDetails.row !== undefined 
+                      ? `ROW ${ticketDetails.row}` 
+                      : ticketDetails.panel?.row !== undefined 
+                        ? `ROW ${ticketDetails.panel.row}` 
+                        : 'N/A'}
+                  </p>
                 </div>
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Fault Type</label>
                   <p className="mt-1">{ticketDetails.faultType}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Created</label>
+                  <p className="mt-1">{getRelativeTime(ticketDetails.createdAt)}</p>
                 </div>
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Assigned To</label>
@@ -524,7 +507,9 @@ export default function Tickets() {
                 </div>
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Alert ID</label>
-                  <p className="mt-1 font-mono text-xs">{getScanAlertId()}</p>
+                  <p className="mt-1 font-mono text-xs">
+                    {ticketAlertMeta?.alertId || 'N/A'}
+                  </p>
                 </div>
               </div>
 
@@ -548,6 +533,20 @@ export default function Tickets() {
               )}
 
               <div className="space-y-3">
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Scan Details</label>
+                  <div className="mt-1 grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-muted-foreground">Timestamp</span>
+                      <p className="mt-1">{ticketScanDetails?.timestamp || 'N/A'}</p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Device ID</span>
+                      <p className="mt-1">{ticketScanDetails?.deviceId || 'N/A'}</p>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="grid gap-3 md:grid-cols-2">
                   <div>
                     <label className="text-sm font-medium text-muted-foreground">Scan RGB</label>

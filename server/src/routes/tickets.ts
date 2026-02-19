@@ -95,8 +95,6 @@ router.get('/', async (req: Request, res: Response) => {
       select: {
         id: true,
         priority: true,
-        alertId: true,
-        rowNumber: true,
         panelDetections: {
           select: { panelNumber: true, status: true },
           orderBy: { createdAt: 'asc' },
@@ -105,12 +103,8 @@ router.get('/', async (req: Request, res: Response) => {
     });
 
     const scanToPanelNumber = new Map<string, string>();
-    const scanToAlertId = new Map<string, string | null>();
-    const scanToRowNumber = new Map<string, number | null>();
     const actionableScanIds = new Set<string>();
     for (const scan of scans) {
-      scanToAlertId.set(scan.id, scan.alertId ?? null);
-      scanToRowNumber.set(scan.id, scan.rowNumber ?? null);
       const panelNumber =
         scan.panelDetections.find(
           (panel) => panel.status === 'FAULTY' || panel.status === 'DUSTY'
@@ -191,9 +185,6 @@ router.get('/', async (req: Request, res: Response) => {
         null;
       return {
         ...ticket,
-        scanId: scanId ?? null,
-        alertId: scanId ? scanToAlertId.get(scanId) ?? null : null,
-        rowNumber: scanId ? scanToRowNumber.get(scanId) ?? null : null,
         scanPanelId,
       };
     });
