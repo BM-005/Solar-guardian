@@ -87,8 +87,8 @@ export const generateTicketNumber = async (): Promise<string> => {
     ]);
 
     let maxNumber = 0;
-    // Support TK- format (e.g., TK-001, TK-002, etc.)
-    const patterns = [/TK-(\d+)/i, /FAULT ID-FK-(\d+)/i, /FK-(\d+)/i, /TCK-(\d+)/i];
+    // Use only TK-* sequence so legacy FK/TCK tickets do not create visible gaps.
+    const patterns = [/TK-(\d+)/i];
 
     for (const ticket of recentTickets) {
       if (!ticket.ticketNumber) continue;
