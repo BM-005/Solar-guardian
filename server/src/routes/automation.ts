@@ -261,6 +261,7 @@ export const createFaultTicketAndAssignment = async (input: {
   locationX: number;
   locationY: number;
   scanId?: string;
+  alertId?: string;
   zone?: string;
   row?: number;
   status?: string;
@@ -372,6 +373,7 @@ export const createFaultTicketAndAssignment = async (input: {
         faultType: input.faultType,
         zone: input.zone ?? null,
         row: input.row ?? null,
+        alertId: input.alertId ?? null,
         droneImageUrl: input.droneImageUrl ?? null,
         thermalImageUrl: input.thermalImageUrl ?? null,
         aiAnalysis: input.aiAnalysis,

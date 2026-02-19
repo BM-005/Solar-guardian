@@ -102,6 +102,7 @@ model Ticket {
   faultType         String
   zone              String?      // Zone name (e.g., "A", "B") - for row-based alerts
   row               Int?         // Row number - for row-based alerts
+  alertId           String?      // Link to the alert that triggered this ticket
   droneImageUrl     String?
   thermalImageUrl   String?
   aiAnalysis        String?

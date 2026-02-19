@@ -496,7 +496,14 @@ router.post('/', async (req: Request, res: Response) => {
               scanId: scan.id,
             }
           });
-          console.log('âœ… Alert created for scan', scan.id, '- Zone:', zoneName, 'Row:', rowNum);
+          
+          // Update scan with the new alertId so it can be linked to tickets
+          await prisma.solarScan.update({
+            where: { id: scan.id },
+            data: { alertId: newAlertId, rowNumber: rowNum }
+          });
+          
+          console.log('✅ Alert created for scan', scan.id, '- Zone:', zoneName, 'Row:', rowNum, '- AlertId:', newAlertId);
         }
       } catch (alertError) {
         console.error('âŒ Error creating alert for scan:', alertError);
@@ -543,8 +550,12 @@ router.post('/', async (req: Request, res: Response) => {
       // Schedule automation to run after 3 seconds
       setTimeout(async () => {
         try {
-          // Try to find a panel to associate with this scan
-          // In a real scenario, the scan might include panel info or we'd match by device/location
+          // Re-fetch scan to get the latest alertId (in case it was created above)
+          const scanData = await prisma.solarScan.findUnique({
+            where: { id: scan.id },
+            select: { alertId: true, rowNumber: true, timestamp: true }
+          });
+          
           const panel = await resolvePanel();
           
           if (panel) {
@@ -565,7 +576,7 @@ router.post('/', async (req: Request, res: Response) => {
             });
             
             const zoneName = panelWithZone?.zone?.name || 'Unknown';
-            const rowNum = panel.row;
+            const rowNum = scanData?.rowNumber || panel.row;
             const alertStatus = hasFaulty || normalizedSeverity === 'critical' ? 'fault' : 'warning';
             
             automationResult = await createFaultTicketAndAssignment({
@@ -573,7 +584,7 @@ router.post('/', async (req: Request, res: Response) => {
                 panelId: panel.id,
                 faultType: effectiveFaultType,
               severity: normalizedSeverity,
-              detectedAt: scan.timestamp,
+              detectedAt: scanData?.timestamp || scan.timestamp,
               description: `Automated scan processing - ${hasFaulty ? 'thermal fault detected' : 'dust accumulation: ' + dustyPanelCount + ' panels'}`,
               aiConfidence: Math.max(0, Math.min(100, Number(thermal?.risk_score ?? 50))),
               aiAnalysis: `Scan severity: ${severity}; dusty panels: ${dustyPanelCount}; faulty detections: ${hasFaulty ? 'yes' : 'no'}`,
@@ -589,6 +600,7 @@ router.post('/', async (req: Request, res: Response) => {
               zone: zoneName,
               row: rowNum,
               status: alertStatus,
+              alertId: scanData?.alertId || undefined,
             });
 
               // Update scan status to processed
