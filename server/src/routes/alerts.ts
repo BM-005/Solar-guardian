@@ -3,17 +3,15 @@ import prisma from '../db.js';
 
 const router = Router();
 
-const ALERT_ID_PATTERN = /^ALT-(\d+)$/i;
-
 // Generate sequential alert ID in ALT-XXX format (ALT-001, ALT-002, ...)
-const generateAlertId = async (): Promise<string> => {
+export const generateAlertId = async (): Promise<string> => {
   const existing = await prisma.alert.findMany({
     where: { alertId: { startsWith: 'ALT-' } },
     select: { alertId: true },
   });
 
   const maxNumber = existing.reduce((max, row) => {
-    const match = row.alertId?.match(ALERT_ID_PATTERN);
+    const match = row.alertId?.match(/^ALT-(\d+)$/i);
     const parsed = match ? Number.parseInt(match[1], 10) : 0;
     return Number.isFinite(parsed) && parsed > max ? parsed : max;
   }, 0);

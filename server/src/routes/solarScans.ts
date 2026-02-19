@@ -1,6 +1,7 @@
 ﻿import { Router, Request, Response } from 'express';
 import prisma from '../db.js';
 import { createFaultTicketAndAssignment, generateIncidentId, normalizeSeverity, priorityFromSeverity } from './automation.js';
+import { generateAlertId } from './alerts.js';
 
 const router = Router();
 const DUPLICATE_WINDOW_SECONDS = 120;
@@ -394,7 +395,7 @@ router.post('/', async (req: Request, res: Response) => {
           dismissed: false,
         },
         orderBy: { createdAt: 'desc' },
-        select: { id: true, row: true, createdAt: true },
+        select: { id: true, alertId: true, row: true, createdAt: true },
       });
 
       if (
@@ -413,6 +414,43 @@ router.post('/', async (req: Request, res: Response) => {
           await prisma.alert.delete({
             where: { id: alertRecord.id },
           });
+          console.log('🗑️ Alert removed after 3 scans:', alertIdValue);
+        }
+      }
+    } else if (rowNumberValue != null) {
+      // No explicit alertId provided - check if there's an active alert for this row
+      const alertForRow = await prisma.alert.findFirst({
+        where: {
+          row: rowNumberValue,
+          dismissed: false,
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, alertId: true, row: true, createdAt: true },
+      });
+
+      if (alertForRow?.alertId) {
+        // Link this scan to the alert
+        await prisma.solarScan.update({
+          where: { id: scan.id },
+          data: { alertId: alertForRow.alertId, rowNumber: alertForRow.row },
+        });
+
+        // Count all scans linked to this alert (including this one)
+        const scanCountForAlert = await prisma.solarScan.count({
+          where: {
+            alertId: alertForRow.alertId,
+            timestamp: { gte: alertForRow.createdAt },
+          },
+        });
+
+        console.log(`📊 Scan linked to alert ${alertForRow.alertId} (scan #${scanCountForAlert})`);
+
+        // If 3+ scans exist for the alert, remove it
+        if (scanCountForAlert >= 3) {
+          await prisma.alert.delete({
+            where: { id: alertForRow.id },
+          });
+          console.log('🗑️ Alert removed after 3 scans:', alertForRow.alertId);
         }
       }
     }
@@ -446,7 +484,8 @@ router.post('/', async (req: Request, res: Response) => {
           const rowNum = panel.row;
           const alertStatus = hasFaulty || normalizedSeverity === 'critical' ? 'fault' : 'warning';
           
-          // Create alert with scanId link
+          // Create alert with scanId link - use sequential ID
+          const newAlertId = await generateAlertId();
           await prisma.alert.create({
             data: {
               zone: zoneName,
