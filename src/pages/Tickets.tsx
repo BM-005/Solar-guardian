@@ -50,7 +50,6 @@ interface TicketFromAPI {
   thermalImageUrl: string | null;
   zone: string | null;  // Zone name (e.g., "A", "B")
   row: number | null;   // Row number
-  alertId: string | null; // Alert ID from scan
   notes: Array<{
     id: string;
     authorId: string;
@@ -259,48 +258,35 @@ export default function Tickets() {
     setLoadingDetails(true);
     setTicketAlertMeta(null);
     setTicketScanDetails(null);
-    
-    // Use alertId directly from ticket if available (from the list)
-    if (ticket.alertId) {
-      setTicketAlertMeta({ alertId: ticket.alertId, scanId: null });
-    }
-    
     try {
       const response = await fetch(`/api/tickets/${ticket.id}`);
       if (response.ok) {
         const details = await response.json();
         setTicketDetails(details);
-        
-        // Use alertId from details if available (has higher fidelity)
-        if (details.alertId) {
-          setTicketAlertMeta({ alertId: details.alertId, scanId: details.scanId || null });
-        }
       } else {
         setTicketDetails(ticket); // fallback to list data
       }
-      // Only try to fetch alert/scan details if no alertId in ticket
-      if (!ticket.alertId) {
-        try {
-          const alertsRes = await fetch('/api/alerts');
-          if (alertsRes.ok) {
-            const alerts = await alertsRes.json();
-            const alert =
-              alerts.find((a: any) => a.ticketId === ticket.id && a.scanId) ||
-              alerts.find((a: any) => a.ticketId === ticket.id);
-            if (alert) {
-              setTicketAlertMeta({ alertId: alert.alertId || null, scanId: alert.scanId || null });
-              if (alert.scanId) {
-                const scanRes = await fetch(`/api/solar-scans/${alert.scanId}`);
-                if (scanRes.ok) {
-                  const scan = await scanRes.json();
-                  setTicketScanDetails(scan);
-                }
+      // Fetch alert meta (alertId + scanId) for this ticket
+      try {
+        const alertsRes = await fetch('/api/alerts');
+        if (alertsRes.ok) {
+          const alerts = await alertsRes.json();
+          const alert =
+            alerts.find((a: any) => a.ticketId === ticket.id && a.scanId) ||
+            alerts.find((a: any) => a.ticketId === ticket.id);
+          if (alert) {
+            setTicketAlertMeta({ alertId: alert.alertId || null, scanId: alert.scanId || null });
+            if (alert.scanId) {
+              const scanRes = await fetch(`/api/solar-scans/${alert.scanId}`);
+              if (scanRes.ok) {
+                const scan = await scanRes.json();
+                setTicketScanDetails(scan);
               }
             }
           }
-        } catch (err) {
-          console.warn('Failed to fetch alert/scan details:', err);
         }
+      } catch (err) {
+        console.warn('Failed to fetch alert/scan details:', err);
       }
     } catch (err) {
       console.error('Failed to fetch ticket details:', err);
