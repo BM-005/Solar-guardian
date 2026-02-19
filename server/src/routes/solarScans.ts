@@ -12,6 +12,14 @@ const toJpegDataUrl = (rawData?: string | null) => {
   return `data:image/jpeg;base64,${base64Data}`;
 };
 
+const parseRowNumberFromPanelId = (panelId?: string | null): number | null => {
+  if (!panelId) return null;
+  const match = String(panelId).match(/(\d+)/);
+  if (!match) return null;
+  const value = Number.parseInt(match[1], 10);
+  return Number.isFinite(value) ? value : null;
+};
+
 const nearlyEqual = (a?: number | null, b?: number | null, epsilon = 0.25) => {
   if (a == null || b == null) return true;
   return Math.abs(a - b) <= epsilon;
@@ -80,8 +88,22 @@ router.post('/', async (req: Request, res: Response) => {
       deviceName,
       thermalImage,
       rgbImage,
+      alertId,
+      panelId,
+      rowNumber,
+      alert_id,
+      panel_id,
+      row_number,
       autoProcess // Flag to trigger automatic ticket creation
     } = req.body;
+    let alertIdValue = alertId || alert_id || null;
+    let panelIdValue = panelId || panel_id || null;
+    let rowNumberValue =
+      typeof rowNumber === 'number'
+        ? rowNumber
+        : typeof row_number === 'number'
+        ? row_number
+        : null;
     const thermalImageDataUrl = toJpegDataUrl(thermalImage);
     const rgbImageDataUrl = toJpegDataUrl(rgbImage);
 
@@ -98,6 +120,25 @@ router.post('/', async (req: Request, res: Response) => {
       panels?.find((p: any) => p.status === 'FAULTY' || p.status === 'DUSTY')?.panel_number ||
       panels?.find((p: any) => p.status === 'FAULTY' || p.status === 'DUSTY')?.panelNumber ||
       null;
+    if (!panelIdValue) {
+      panelIdValue = scanPanelId;
+    }
+    if (rowNumberValue == null) {
+      rowNumberValue = parseRowNumberFromPanelId(panelIdValue);
+    }
+    if (!alertIdValue && rowNumberValue != null) {
+      const matchedAlert = await prisma.alert.findFirst({
+        where: {
+          dismissed: false,
+          row: rowNumberValue,
+          alertId: { not: null },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (matchedAlert?.alertId) {
+        alertIdValue = matchedAlert.alertId;
+      }
+    }
 
     // Determine if we should automatically create a ticket
     // Tickets should be created only for scan issues (dusty/faulty)
@@ -150,6 +191,9 @@ router.post('/', async (req: Request, res: Response) => {
           timestamp: timestampValue,
           priority: priority || recentCandidate.priority || 'NORMAL',
           status: shouldAutoCreateTicket ? 'processing' : (recentCandidate.status || 'pending'),
+          alertId: alertIdValue ?? recentCandidate.alertId,
+          panelId: panelIdValue ?? recentCandidate.panelId,
+          rowNumber: rowNumberValue ?? recentCandidate.rowNumber,
           thermalMinTemp: thermal?.min_temp ?? recentCandidate.thermalMinTemp,
           thermalMaxTemp: thermal?.max_temp ?? recentCandidate.thermalMaxTemp,
           thermalMeanTemp: avgTemperature ?? recentCandidate.thermalMeanTemp,
@@ -175,6 +219,9 @@ router.post('/', async (req: Request, res: Response) => {
           timestamp: timestampValue,
           priority: priority || 'NORMAL',
           status: shouldAutoCreateTicket ? 'processing' : 'pending',
+          alertId: alertIdValue,
+          panelId: panelIdValue,
+          rowNumber: rowNumberValue,
           
           // Thermal data from Pi camera (for delta/anomaly detection)
           thermalMinTemp: thermal?.min_temp || null,
@@ -198,6 +245,12 @@ router.post('/', async (req: Request, res: Response) => {
         }
       });
     }
+
+    if (alertIdValue) {
+      await prisma.alert.deleteMany({
+        where: { alertId: alertIdValue },
+      });
+    }
     
     // Log which temperature source was used
     if (latestWeather) {
@@ -210,7 +263,10 @@ router.post('/', async (req: Request, res: Response) => {
     // CREATE ALERT FOR THIS SCAN
     // Only create alert if scan has issues (dusty/faulty panels or high severity)
     // =====================================================
-    if (dustyPanelCount > 0 || hasFaulty || normalizedSeverity === 'critical' || normalizedSeverity === 'high') {
+    if (
+      !alertIdValue &&
+      (dustyPanelCount > 0 || hasFaulty || normalizedSeverity === 'critical' || normalizedSeverity === 'high')
+    ) {
       try {
         // Try to find a panel to get zone and row info
         const panel = await resolvePanel();

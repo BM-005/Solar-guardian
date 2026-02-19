@@ -80,6 +80,12 @@ type PiPanelCropInput = {
 };
 
 type PiAnalysisResultInput = {
+  alert_id?: string;
+  panel_id?: string;
+  row_number?: number;
+  alertId?: string;
+  panelId?: string;
+  rowNumber?: number;
   capture_id?: string | number;
   timestamp?: string;
   report?: {
@@ -113,6 +119,9 @@ type PiAnalysisResultInput = {
 
 type PiResultForClients = {
   id: string;
+  alert_id?: string;
+  panel_id?: string;
+  row_number?: number;
   capture_id: string;
   timestamp: string;
   received_at: string;
@@ -170,6 +179,14 @@ const toJpegDataUrl = (rawData?: string | null) => {
   const parts = rawData.split(',');
   const base64Data = parts.length > 1 ? parts[1] : parts[0];
   return `data:image/jpeg;base64,${base64Data}`;
+};
+
+const parseRowNumberFromPanelId = (panelId?: string | null): number | null => {
+  if (!panelId) return null;
+  const match = String(panelId).match(/(\d+)/);
+  if (!match) return null;
+  const value = Number.parseInt(match[1], 10);
+  return Number.isFinite(value) ? value : null;
 };
 
 const getSeverityFromHealthScore = (healthScore: number): 'CRITICAL' | 'HIGH' | 'MODERATE' | 'LOW' => {
@@ -384,6 +401,14 @@ io.on('connection', (socket) => {
       }
 
       const captureId = String(data.capture_id);
+      let alertIdValue = data.alert_id ?? data.alertId ?? null;
+      let panelIdValue = data.panel_id ?? data.panelId ?? null;
+      let rowNumberValue =
+        typeof data.row_number === 'number'
+          ? data.row_number
+          : typeof data.rowNumber === 'number'
+          ? data.rowNumber
+          : null;
       const healthScore = Number(data.report.health_score ?? 0);
       const priority = data.report.priority ?? 'NORMAL';
       const receivedAt = new Date();
@@ -437,6 +462,29 @@ io.on('connection', (socket) => {
         });
       });
 
+      if (!panelIdValue && panelCropsForClients.length > 0) {
+        panelIdValue =
+          panelCropsForClients.find((crop) => crop.status === 'FAULTY' || crop.status === 'DUSTY')?.panel_number ??
+          panelCropsForClients[0]?.panel_number ??
+          null;
+      }
+      if (rowNumberValue == null) {
+        rowNumberValue = parseRowNumberFromPanelId(panelIdValue);
+      }
+      if (!alertIdValue && rowNumberValue != null) {
+        const matchedAlert = await prisma.alert.findFirst({
+          where: {
+            dismissed: false,
+            row: rowNumberValue,
+            alertId: { not: null },
+          },
+          orderBy: { createdAt: 'desc' },
+        });
+        if (matchedAlert?.alertId) {
+          alertIdValue = matchedAlert.alertId;
+        }
+      }
+
       const panelDetectedDustyCount = panelCropsForClients.filter((crop) => crop.status === 'DUSTY').length;
       const dustyPanelCount =
         data.rgb_stats?.dusty ?? panelDetectedDustyCount;
@@ -481,6 +529,9 @@ io.on('connection', (socket) => {
             timestamp: receivedAt,
             priority: priority || recentCandidate.priority || 'NORMAL',
             status: recentCandidate.status || 'pending',
+            alertId: alertIdValue ?? recentCandidate.alertId,
+            panelId: panelIdValue ?? recentCandidate.panelId,
+            rowNumber: rowNumberValue ?? recentCandidate.rowNumber,
             riskScore: riskScore ?? recentCandidate.riskScore,
             severity: severity ?? recentCandidate.severity,
             thermalMinTemp: thermalMinTemp ?? recentCandidate.thermalMinTemp,
@@ -520,6 +571,9 @@ io.on('connection', (socket) => {
             timestamp: receivedAt,
             priority,
             status: 'pending',
+            alertId: alertIdValue,
+            panelId: panelIdValue,
+            rowNumber: rowNumberValue,
             riskScore,
             severity,
             thermalMinTemp,
@@ -552,6 +606,9 @@ io.on('connection', (socket) => {
 
       const resultForClients: PiResultForClients = {
         id: savedScan.id,
+        alert_id: alertIdValue ?? undefined,
+        panel_id: panelIdValue ?? undefined,
+        row_number: rowNumberValue ?? undefined,
         capture_id: captureId,
         timestamp: receivedAt.toISOString(),
         received_at: receivedAt.toISOString(),
@@ -585,6 +642,12 @@ io.on('connection', (socket) => {
       piResults.unshift(resultForClients);
       if (piResults.length > MAX_PI_RESULTS) {
         piResults.length = MAX_PI_RESULTS;
+      }
+
+      if (alertIdValue) {
+        await prisma.alert.deleteMany({
+          where: { alertId: alertIdValue },
+        });
       }
 
       io.emit('new_result', resultForClients);

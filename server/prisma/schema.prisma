@@ -217,6 +217,9 @@ model SolarScan {
   timestamp       DateTime @default(now())
   priority        String   // HIGH, MEDIUM, NORMAL
   status          String   @default("pending") // pending, processed, archived
+  alertId         String?
+  panelId         String?
+  rowNumber       Int?
   
   // Thermal analysis data
   thermalMinTemp  Float?
@@ -246,6 +249,9 @@ model SolarScan {
   @@index([timestamp])
   @@index([status])
   @@index([severity])
+  @@index([alertId])
+  @@index([panelId])
+  @@index([rowNumber])
 }
 
 model PanelDetection {
