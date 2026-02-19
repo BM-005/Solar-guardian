@@ -214,6 +214,9 @@ model EspSensorReading {
 
 model SolarScan {
   id              String   @id @default(cuid())
+  alertId         String?  // Alert number entered on Raspberry Pi (e.g., ALT-001)
+  panelId         String?  // Panel number entered on Raspberry Pi
+  rowNumber       Int?     // Row number entered on Raspberry Pi
   timestamp       DateTime @default(now())
   priority        String   // HIGH, MEDIUM, NORMAL
   status          String   @default("pending") // pending, processed, archived
@@ -246,6 +249,7 @@ model SolarScan {
   @@index([timestamp])
   @@index([status])
   @@index([severity])
+  @@index([alertId])
 }
 
 model PanelDetection {

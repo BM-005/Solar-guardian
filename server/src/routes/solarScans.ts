@@ -32,6 +32,9 @@ const AUTO_TICKET_THRESHOLD = Number(process.env.AUTO_TICKET_THRESHOLD ?? 3); //
 router.post('/', async (req: Request, res: Response) => {
   try {
     const {
+      alertId,
+      panelId,
+      rowNumber,
       timestamp,
       priority,
       thermal,
@@ -75,6 +78,9 @@ router.post('/', async (req: Request, res: Response) => {
     
     const scan = await prisma.solarScan.create({
       data: {
+        alertId: typeof alertId === 'string' && alertId.trim() ? alertId.trim() : null,
+        panelId: typeof panelId === 'string' && panelId.trim() ? panelId.trim() : null,
+        rowNumber: typeof rowNumber === 'number' && Number.isFinite(rowNumber) ? rowNumber : null,
         timestamp: timestamp ? new Date(timestamp) : new Date(),
         priority: priority || 'NORMAL',
         status: shouldAutoCreateTicket ? 'processing' : 'pending',
@@ -100,6 +106,20 @@ router.post('/', async (req: Request, res: Response) => {
         deviceName: deviceName || null,
       }
     });
+
+    // If scan carries an alert number, remove matching active alert from Alerts section.
+    if (typeof alertId === 'string' && alertId.trim()) {
+      const normalizedAlertId = alertId.trim();
+      const deleted = await prisma.alert.deleteMany({
+        where: {
+          alertId: normalizedAlertId,
+          dismissed: false,
+        },
+      });
+      if (deleted.count > 0) {
+        console.log(`✅ Resolved alert ${normalizedAlertId}: removed ${deleted.count} alert record(s) after scan save`);
+      }
+    }
     
     // Log which temperature source was used
     if (latestWeather) {

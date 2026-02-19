@@ -62,6 +62,9 @@ type PiPanelCropInput = {
 };
 
 type PiAnalysisResultInput = {
+  alert_id?: string;
+  panel_id?: string;
+  row_number?: number;
   capture_id?: string | number;
   timestamp?: string;
   report?: {
@@ -95,6 +98,9 @@ type PiAnalysisResultInput = {
 
 type PiResultForClients = {
   id: string;
+  alert_id?: string | null;
+  panel_id?: string | null;
+  row_number?: number | null;
   capture_id: string;
   timestamp: string;
   received_at: string;
@@ -397,6 +403,9 @@ io.on('connection', (socket) => {
 
       const savedScan = await prisma.solarScan.create({
         data: {
+          alertId: typeof data.alert_id === 'string' && data.alert_id.trim() ? data.alert_id.trim() : null,
+          panelId: typeof data.panel_id === 'string' && data.panel_id.trim() ? data.panel_id.trim() : null,
+          rowNumber: typeof data.row_number === 'number' && Number.isFinite(data.row_number) ? data.row_number : null,
           // Use server receive time to avoid timezone skew from Pi-local timestamps.
           timestamp: receivedAt,
           priority,
@@ -430,8 +439,25 @@ io.on('connection', (socket) => {
         },
       });
 
+      // If Pi provided alert number, delete matching active alert after scan is stored.
+      if (typeof data.alert_id === 'string' && data.alert_id.trim()) {
+        const normalizedAlertId = data.alert_id.trim();
+        const deleted = await prisma.alert.deleteMany({
+          where: {
+            alertId: normalizedAlertId,
+            dismissed: false,
+          },
+        });
+        if (deleted.count > 0) {
+          console.log(`✅ Resolved alert ${normalizedAlertId}: removed ${deleted.count} alert record(s) after scan ingestion`);
+        }
+      }
+
       const resultForClients: PiResultForClients = {
         id: savedScan.id,
+        alert_id: savedScan.alertId,
+        panel_id: savedScan.panelId,
+        row_number: savedScan.rowNumber,
         capture_id: captureId,
         timestamp: receivedAt.toISOString(),
         received_at: receivedAt.toISOString(),
