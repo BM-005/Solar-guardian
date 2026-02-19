@@ -22,6 +22,71 @@ const parseRowNumberFromPanelId = (panelId?: string | null): number | null => {
   return Number.isFinite(value) ? value : null;
 };
 
+const pickString = (source: Record<string, unknown>, keys: string[]): string | null => {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed.length > 0) return trimmed;
+    }
+  }
+  return null;
+};
+
+const pickNumber = (source: Record<string, unknown>, keys: string[]): number | null => {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+      const parsed = Number.parseInt(value.trim(), 10);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return null;
+};
+
+const normalizeAlertId = (value: string | null): string | null => {
+  if (!value) return null;
+  const cleaned = value.trim().replace(/\s+/g, '');
+  if (!cleaned) return null;
+  const match = cleaned.match(/^ALT[-_]?(\d+)$/i);
+  if (match) {
+    return `ALT-${match[1]}`;
+  }
+  return cleaned.toUpperCase();
+};
+
+const findAlertIdInObject = (value: unknown): string | null => {
+  if (typeof value === 'string') {
+    const direct = normalizeAlertId(value);
+    if (direct && /^ALT-\d+$/i.test(direct)) return direct;
+    const match = value.match(/\bALT[-_ ]?(\d+)\b/i);
+    if (match) return `ALT-${match[1]}`;
+    return null;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const nested = findAlertIdInObject(item);
+      if (nested) return nested;
+    }
+    return null;
+  }
+  if (value && typeof value === 'object') {
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      const key = k.toLowerCase().replace(/[\s_-]/g, '');
+      if (key.includes('alert') && key.includes('id')) {
+        const fromKey = findAlertIdInObject(v);
+        if (fromKey) return fromKey;
+      }
+    }
+    for (const nestedValue of Object.values(value as Record<string, unknown>)) {
+      const nested = findAlertIdInObject(nestedValue);
+      if (nested) return nested;
+    }
+  }
+  return null;
+};
+
 const nearlyEqual = (a?: number | null, b?: number | null, epsilon = 0.25) => {
   if (a == null || b == null) return true;
   return Math.abs(a - b) <= epsilon;
@@ -152,14 +217,27 @@ router.post('/', async (req: Request, res: Response) => {
       row_number,
       autoProcess // Flag to trigger automatic ticket creation
     } = req.body;
-    let alertIdValue = alertId || alert_id || null;
-    let panelIdValue = panelId || panel_id || null;
+    const payload = req.body as Record<string, unknown>;
+    const explicitAlertRaw =
+      pickString(payload, [
+        'alert_id',
+        'alertId',
+        'alertID',
+        'alertNo',
+        'alert_no',
+        'alertNumber',
+        'alert_number',
+        'alert-id',
+        'alert id',
+      ]) ?? findAlertIdInObject(payload);
+    let alertIdValue = normalizeAlertId(explicitAlertRaw);
+    const hasExplicitAlertId = Boolean(alertIdValue);
+    let panelIdValue =
+      pickString(payload, ['panel_id', 'panelId', 'panelID', 'panelNo', 'panel_no', 'panelNumber', 'panel_number']) ??
+      null;
     let rowNumberValue =
-      typeof rowNumber === 'number'
-        ? rowNumber
-        : typeof row_number === 'number'
-        ? row_number
-        : null;
+      pickNumber(payload, ['row_number', 'rowNumber', 'row', 'row_no', 'rowNo']) ??
+      null;
     const thermalImageDataUrl = toJpegDataUrl(thermalImage);
     const rgbImageDataUrl = toJpegDataUrl(rgbImage);
 
@@ -253,7 +331,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     let scan;
 
-    if (recentCandidate && isLikelyDuplicateScan(recentCandidate, incomingKey)) {
+    if (!alertIdValue && recentCandidate && isLikelyDuplicateScan(recentCandidate, incomingKey)) {
       scan = await prisma.solarScan.update({
         where: { id: recentCandidate.id },
         data: {
@@ -309,6 +387,35 @@ router.post('/', async (req: Request, res: Response) => {
       });
     }
 
+    if (alertIdValue) {
+      const alertRecord = await prisma.alert.findFirst({
+        where: {
+          alertId: alertIdValue,
+          dismissed: false,
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, row: true, createdAt: true },
+      });
+
+      if (
+        alertRecord &&
+        (rowNumberValue == null || alertRecord.row === rowNumberValue)
+      ) {
+        const scanCountForAlert = await prisma.solarScan.count({
+          where: {
+            alertId: alertIdValue,
+            rowNumber: alertRecord.row,
+            timestamp: { gte: alertRecord.createdAt },
+          },
+        });
+
+        if (scanCountForAlert >= 3) {
+          await prisma.alert.delete({
+            where: { id: alertRecord.id },
+          });
+        }
+      }
+    }
     // Log which temperature source was used
     if (latestWeather) {
       console.log(`ðŸ“Š Using onsite ESP sensor temp: ${latestWeather.temperature}Â°C (recorded: ${latestWeather.recordedAt})`);
