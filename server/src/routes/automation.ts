@@ -70,34 +70,30 @@ export const generateIncidentId = () =>
 // Export generateTicketNumber for use in index.ts
 export const generateTicketNumber = async (): Promise<string> => {
   try {
-    // Get the latest ticket to determine the next number
-    const latestTicket = await prisma.ticket.findFirst({
+    // Scan recent ticket numbers and increment the highest recognized sequence.
+    const recentTickets = await prisma.ticket.findMany({
       orderBy: { createdAt: 'desc' },
       select: { ticketNumber: true },
+      take: 500,
     });
 
-    let nextNumber = 1;
-    if (latestTicket?.ticketNumber) {
-      // Extract number from any format: FAULT ID-FK-xxx, FK-xxx, TCK-xxx, TK-xxx
-      // Match patterns like: FAULT ID-FK-001, FK-001, TCK-001, TK-001
-      const patterns = [
-        /FAULT ID-FK-(\d+)/i,
-        /FK-(\d+)/i,
-        /TCK-(\d+)/i,
-        /TK-(\d+)/i,
-      ];
-      
+    let maxNumber = 0;
+    const patterns = [/FAULT ID-FK-(\d+)/i, /FK-(\d+)/i, /TCK-(\d+)/i, /TK-(\d+)/i];
+
+    for (const ticket of recentTickets) {
+      if (!ticket.ticketNumber) continue;
       for (const pattern of patterns) {
-        const match = latestTicket.ticketNumber.match(pattern);
-        if (match) {
-          nextNumber = parseInt(match[1], 10) + 1;
-          break;
+        const match = ticket.ticketNumber.match(pattern);
+        if (!match) continue;
+        const current = Number.parseInt(match[1], 10);
+        if (Number.isFinite(current)) {
+          maxNumber = Math.max(maxNumber, current);
         }
+        break;
       }
     }
 
-    // Format as FK-001, FK-002, etc. (simplified format to avoid redundancy)
-    return `FK-${nextNumber.toString().padStart(3, '0')}`;
+    return `FK-${(maxNumber + 1).toString().padStart(3, '0')}`;
   } catch (error) {
     // Fallback to timestamp-based if database query fails
     console.error('Error generating ticket number, using fallback:', error);
@@ -256,7 +252,9 @@ export const createFaultTicketAndAssignment = async (input: {
       },
     });
 
-    const duplicate = await findDuplicateFault(tx, input.panelId, input.faultType, input.detectedAt);
+    // For scan-driven automation, always create a fresh ticket for the new scan.
+    const duplicate =
+      input.scanId ? null : await findDuplicateFault(tx, input.panelId, input.faultType, input.detectedAt);
     if (duplicate?.tickets[0]) {
       await createAutomationEvent(tx, {
         eventType: 'DuplicateFaultIgnored',

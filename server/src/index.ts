@@ -1,4 +1,4 @@
-import express from 'express';
+﻿import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { createServer } from 'http';
@@ -316,7 +316,7 @@ io.on('connection', (socket) => {
       });
 
       if (existingFault) {
-        console.log('⚠️ Duplicate fault detected for row', panel.row, '- skipping creation');
+        console.log('âš ï¸ Duplicate fault detected for row', panel.row, '- skipping creation');
         socket.emit('image-received', {
           success: true,
           panelId: data.panelId,
@@ -493,7 +493,7 @@ io.on('connection', (socket) => {
         thermalDelta,
       };
 
-      let savedScan;
+      let savedScan: { id: string; timestamp: Date };
 
       if (recentCandidate && isLikelyDuplicatePiScan(recentCandidate, incomingKey)) {
         savedScan = await prisma.solarScan.update({
@@ -618,12 +618,7 @@ io.on('connection', (socket) => {
       const AUTO_TICKET_THRESHOLD = 3;
       const normalizedSeverity = normalizeSeverity(severity); // This converts MODERATE->medium, CRITICAL->critical, etc.
       const hasFaulty = panelCropsForClients.some((crop) => crop.status === 'FAULTY');
-      const shouldAutoCreateTicket =
-        normalizedSeverity === 'critical' ||
-        normalizedSeverity === 'high' ||
-        normalizedSeverity === 'medium' ||
-        dustyPanelCount >= AUTO_TICKET_THRESHOLD ||
-        hasFaulty;
+      const shouldAutoCreateTicket = totalPanels > 0;
 
       if (shouldAutoCreateTicket) {
         // Update scan status to processing
@@ -649,41 +644,6 @@ io.on('connection', (socket) => {
                 ? 'dust_accumulation'
                 : 'scan_anomaly';
 
-              // Check for duplicate fault within the deduplication window BEFORE creating
-              // Check at ROW level, not panel level - one alert per row
-              const DEDUPE_WINDOW_MINUTES = 15;
-              const dedupeFrom = new Date(Date.now() - DEDUPE_WINDOW_MINUTES * 60 * 1000);
-              
-              // Get all panels in the same row as this panel
-              const panelsInRow = await prisma.solarPanel.findMany({
-                where: { row: panel.row },
-                select: { id: true },
-              });
-              const panelIdsInRow = panelsInRow.map(p => p.id);
-              
-              const existingFault = await prisma.faultDetection.findFirst({
-                where: {
-                  panelId: { in: panelIdsInRow },
-                  detectedAt: { gte: dedupeFrom },
-                },
-                orderBy: { detectedAt: 'desc' },
-              });
-
-              if (existingFault) {
-                console.log('⚠️ Duplicate fault detected for row', panel.row, '- skipping ticket creation');
-                
-                // Update scan status to processed without creating new ticket
-                await prisma.solarScan.update({
-                  where: { id: savedScan.id },
-                  data: { status: 'processed', updatedAt: new Date() }
-                });
-                
-                // Delete the scan since we don't need a new ticket
-                await prisma.solarScan.delete({
-                  where: { id: savedScan.id }
-                });
-                return;
-              }
 
               const automationResult = await createFaultTicketAndAssignment({
                 incidentId,
@@ -703,8 +663,8 @@ io.on('connection', (socket) => {
                 recommendedAction: hasFaulty
                   ? 'Immediate technician dispatch for thermal fault verification'
                   : 'Schedule panel cleaning and technician validation',
-                droneImageUrl: mainImageWebPath || undefined,
-                thermalImageUrl: thermalImageWebPath || undefined,
+                droneImageUrl: mainImageDataUrl || mainImageWebPath || undefined,
+                thermalImageUrl: thermalImageDataUrl || thermalImageWebPath || undefined,
                 locationX: 0,
                 locationY: 0,
                 scanId: savedScan.id,
@@ -717,21 +677,18 @@ io.on('connection', (socket) => {
               });
 
               console.log(
-                '✅ Automation triggered (3s delay): Ticket',
+                'âœ… Automation triggered (3s delay): Ticket',
                 automationResult.ticketNumber,
                 'assigned to technician'
               );
               
-              // Delete the scan after ticket creation - it now lives in tickets only
-              await prisma.solarScan.delete({
-                where: { id: savedScan.id }
-              });
-              console.log('🗑️ Scan removed from scans list - now visible in tickets only');
+              // Keep scan entry visible and linked to the created ticket workflow.
+              console.log('✅ Scan retained after ticket creation');
             } else {
-              console.log('⚠️ No panel found for automation - scan saved but no ticket created');
+              console.log('âš ï¸ No panel found for automation - scan saved but no ticket created');
             }
           } catch (autoError) {
-            console.error('❌ Automation error:', autoError);
+            console.error('âŒ Automation error:', autoError);
           }
         }, 3000); // 3 second delay
       }

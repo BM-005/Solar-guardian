@@ -128,7 +128,7 @@ export default function Tickets() {
       }
     }
     fetchData();
-    const intervalId = window.setInterval(fetchData, 60000);
+    const intervalId = window.setInterval(fetchData, 5000);
 
     // Refetch when window gets focus to update counts after assignments from other pages
     const handleFocus = () => fetchData();
@@ -183,14 +183,13 @@ export default function Tickets() {
     const first = scan.panelDetections.find((p: any) => p.panelNumber) || scan.panelDetections[0];
     return first?.panelNumber || null;
   };
-  const getDisplayTicketNumber = (index: number) => `TK-${String(index + 1).padStart(3, '0')}`;
-  const getDisplayTicketLabel = (ticket: TicketFromAPI, index: number) => {
+  const getDisplayTicketLabel = (ticket: TicketFromAPI) => {
     const row = ticket.panel?.row;
     const column = ticket.panel?.column;
     if (typeof row === 'number' && typeof column === 'number') {
-      return `ROW ${row} - P${column}`;
+      return `${ticket.ticketNumber} • ROW ${row} - P${column}`;
     }
-    return getDisplayTicketNumber(index);
+    return ticket.ticketNumber || 'N/A';
   };
 
   const handleViewTicket = async (ticket: TicketFromAPI) => {
@@ -369,7 +368,7 @@ export default function Tickets() {
         <DialogContent className="sm:max-w-[600px] max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
-              Ticket Details - {selectedTicket ? getDisplayTicketLabel(selectedTicket, filteredTickets.findIndex(t => t.id === selectedTicket.id)) : ''}
+              Ticket Details - {selectedTicket ? getDisplayTicketLabel(selectedTicket) : ''}
             </DialogTitle>
           </DialogHeader>
           {loadingDetails ? (
@@ -539,7 +538,7 @@ export default function Tickets() {
         </div>
       ) : (
         <div className="space-y-4">
-          {sortedTickets.map((ticket, index) => {
+          {sortedTickets.map((ticket) => {
             const technician = getTechnician(ticket.assignedTechnicianId);
             const statusKey = ticket.status === 'in_progress' ? 'in-progress' : ticket.status;
             const StatusIcon = statusIcons[ticket.status] || AlertTriangle;
@@ -555,7 +554,7 @@ export default function Tickets() {
                         <StatusIcon className="h-5 w-5" />
                       </div>
                       <div>
-                        <p className="font-semibold">{getDisplayTicketLabel(ticket, index)}</p>
+                        <p className="font-semibold">{getDisplayTicketLabel(ticket)}</p>
                         <p className="text-sm text-muted-foreground">{ticket.faultType}</p>
                       </div>
                     </div>
