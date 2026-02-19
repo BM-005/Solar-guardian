@@ -352,7 +352,7 @@ export default function Scans() {
             <CardContent className="flex items-center justify-between p-6">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Total Scans</p>
-                <p className="text-3xl font-bold">{stats.totalScans}</p>
+                <p className="text-3xl font-bold">{filteredScans.length}</p>
               </div>
               <div className="rounded-xl bg-blue-500/10 p-3">
                 <Camera className="h-6 w-6 text-blue-500" />
