@@ -9,15 +9,18 @@ const MIN_HEALTHY_PANEL_VOLTAGE = Number(process.env.MIN_HEALTHY_PANEL_VOLTAGE |
 const MIN_WARNING_PANEL_VOLTAGE = Number(process.env.MIN_WARNING_PANEL_VOLTAGE || 10);
 const MIN_FAULT_PANEL_VOLTAGE = Number(process.env.MIN_FAULT_PANEL_VOLTAGE || 10);
 const ALERT_STATUS_TRANSITIONS = new Set(['warning', 'fault']);
+const LOGICAL_ZONES = ['A', 'B'] as const;
+const ROWS_PER_ZONE = 3;
+const PANELS_PER_ROW = 3;
 
 // Each ESP32 controls a series string of panels.
 const deviceToPanelMap: Record<string, string[]> = {
   ESP_01: ['PNL-A0101', 'PNL-A0102', 'PNL-A0103'],
   ESP_02: ['PNL-A0201', 'PNL-A0202', 'PNL-A0203'],
   ESP_03: ['PNL-A0301', 'PNL-A0302', 'PNL-A0303'],
-  // ESP_04: ['PNL-B0101', 'PNL-B0102', 'PNL-B0103'],
-  // ESP_05: ['PNL-B0201', 'PNL-B0202', 'PNL-B0203'],
-  // ESP_06: ['PNL-B0301', 'PNL-B0302', 'PNL-B0303'],
+  ESP_04: ['PNL-B0101', 'PNL-B0102', 'PNL-B0103'],
+  ESP_05: ['PNL-B0201', 'PNL-B0202', 'PNL-B0203'],
+  ESP_06: ['PNL-B0301', 'PNL-B0302', 'PNL-B0303'],
 };
 
 const panelToDeviceMap: Record<string, string> = Object.entries(deviceToPanelMap).reduce(
@@ -100,6 +103,67 @@ function deriveAggregateStatus(statuses: string[]): 'healthy' | 'warning' | 'fau
   return 'healthy';
 }
 
+function buildPanelId(zone: string, row: number, column: number): string {
+  return `PNL-${zone}${String(row).padStart(2, '0')}${String(column).padStart(2, '0')}`;
+}
+
+async function ensureCanonicalPanelLayout() {
+  const zoneRecords = await Promise.all(
+    LOGICAL_ZONES.map((zoneName) =>
+      prisma.zone.upsert({
+        where: { name: zoneName },
+        update: {},
+        create: { name: zoneName },
+      }),
+    ),
+  );
+
+  const zoneIdByName = new Map(zoneRecords.map((zone) => [zone.name, zone.id]));
+  const now = new Date();
+  const installDate = new Date('2025-01-01T00:00:00.000Z');
+
+  const upserts: Array<Promise<unknown>> = [];
+  for (const zone of LOGICAL_ZONES) {
+    const zoneId = zoneIdByName.get(zone);
+    if (!zoneId) continue;
+
+    for (let row = 1; row <= ROWS_PER_ZONE; row += 1) {
+      for (let column = 1; column <= PANELS_PER_ROW; column += 1) {
+        const panelId = buildPanelId(zone, row, column);
+        upserts.push(
+          prisma.solarPanel.upsert({
+            where: { panelId },
+            update: {
+              row,
+              column,
+              zoneId,
+              inverterGroup: `INV-${zone}-1`,
+              stringId: `STR-${zone}-${row}`,
+            },
+            create: {
+              panelId,
+              row,
+              column,
+              zoneId,
+              status: 'offline',
+              efficiency: 0,
+              currentOutput: 0,
+              maxOutput: 45,
+              temperature: 0,
+              lastChecked: now,
+              installDate,
+              inverterGroup: `INV-${zone}-1`,
+              stringId: `STR-${zone}-${row}`,
+            },
+          }),
+        );
+      }
+    }
+  }
+
+  await Promise.all(upserts);
+}
+
 async function withDeviceSensorData<T extends { panelId: string }>(panels: T[]) {
   const nowMs = Date.now();
   const deviceIds = Array.from(
@@ -159,13 +223,14 @@ async function withDeviceSensorData<T extends { panelId: string }>(panels: T[]) 
 // Get all panels with optional filtering
 router.get('/', async (req: Request, res: Response) => {
   try {
+    await ensureCanonicalPanelLayout();
     const { status, zone, search } = req.query;
-    const zoneFilter = typeof zone === 'string' && ['A', 'B'].includes(zone) ? zone : undefined;
+    const zoneFilter = typeof zone === 'string' && LOGICAL_ZONES.includes(zone as 'A' | 'B') ? zone : undefined;
 
     const where = {
       row: { lte: 3 },
       column: { lte: 3 },
-      zone: zoneFilter ? { is: { name: zoneFilter } } : { is: { name: { in: ['A', 'B'] } } },
+      zone: zoneFilter ? { is: { name: zoneFilter } } : { is: { name: { in: [...LOGICAL_ZONES] } } },
       ...(typeof status === 'string' ? { status } : {}),
       ...(typeof search === 'string' && search.trim()
         ? { panelId: { contains: search.trim(), mode: 'insensitive' as const } }
@@ -192,21 +257,28 @@ router.get('/', async (req: Request, res: Response) => {
 // Get panel statistics
 router.get('/stats', async (_req: Request, res: Response) => {
   try {
+    await ensureCanonicalPanelLayout();
+    const canonicalWhere = {
+      row: { lte: ROWS_PER_ZONE },
+      column: { lte: PANELS_PER_ROW },
+      zone: { is: { name: { in: [...LOGICAL_ZONES] } } },
+    };
+
     const [totalPanels, healthyPanels, warningPanels, faultPanels, offlinePanels, currentGeneration] =
       await Promise.all([
-        prisma.solarPanel.count(),
-        prisma.solarPanel.count({ where: { status: 'healthy' } }),
-        prisma.solarPanel.count({ where: { status: 'warning' } }),
-        prisma.solarPanel.count({ where: { status: 'fault' } }),
-        prisma.solarPanel.count({ where: { status: 'offline' } }),
-        prisma.solarPanel.aggregate({ _sum: { currentOutput: true } }),
+        prisma.solarPanel.count({ where: canonicalWhere }),
+        prisma.solarPanel.count({ where: { ...canonicalWhere, status: 'healthy' } }),
+        prisma.solarPanel.count({ where: { ...canonicalWhere, status: 'warning' } }),
+        prisma.solarPanel.count({ where: { ...canonicalWhere, status: 'fault' } }),
+        prisma.solarPanel.count({ where: { ...canonicalWhere, status: 'offline' } }),
+        prisma.solarPanel.aggregate({ where: canonicalWhere, _sum: { currentOutput: true } }),
       ]);
 
     const maxCapacity = totalPanels * 400;
     const currentGen = currentGeneration._sum.currentOutput || 0;
     const avgEfficiency = await prisma.solarPanel.aggregate({
       _avg: { efficiency: true },
-      where: { status: { not: 'offline' } },
+      where: { ...canonicalWhere, status: { not: 'offline' } },
     });
 
     res.json({
@@ -229,7 +301,13 @@ router.get('/stats', async (_req: Request, res: Response) => {
 // Get all panels with live sensor data
 router.get('/live', async (_req: Request, res: Response) => {
   try {
+    await ensureCanonicalPanelLayout();
     const panels = await prisma.solarPanel.findMany({
+      where: {
+        row: { lte: ROWS_PER_ZONE },
+        column: { lte: PANELS_PER_ROW },
+        zone: { is: { name: { in: [...LOGICAL_ZONES] } } },
+      },
       include: { zone: true },
       orderBy: [{ zone: { name: 'asc' } }, { row: 'asc' }, { column: 'asc' }],
     });
@@ -245,6 +323,7 @@ router.get('/live', async (_req: Request, res: Response) => {
 // Get DB-backed live status for dashboard banner
 router.get('/live-status', async (_req: Request, res: Response) => {
   try {
+    await ensureCanonicalPanelLayout();
     const deviceIds = Object.keys(deviceToPanelMap);
     const mappedPanelIds = Object.values(deviceToPanelMap).flat();
     const now = Date.now();
@@ -478,6 +557,7 @@ router.get('/debug/devices', async (_req: Request, res: Response) => {
 // Get panels by zone
 router.get('/zone/:zoneName', async (req: Request, res: Response) => {
   try {
+    await ensureCanonicalPanelLayout();
     const panels = await prisma.solarPanel.findMany({
       where: { zone: { name: req.params.zoneName } },
       include: { zone: true },

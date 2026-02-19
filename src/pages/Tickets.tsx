@@ -439,32 +439,6 @@ export default function Tickets() {
             </div>
           ) : ticketDetails ? (
             <div className="space-y-4">
-              {/* Row and Panel Info - Prominently displayed */}
-              <div className="flex gap-4 p-4 bg-muted/50 rounded-lg">
-                <div className="flex-1">
-                  <label className="text-sm font-medium text-muted-foreground">Row</label>
-                  <p className="mt-1 text-2xl font-bold">
-                    {ticketDetails.row !== null && ticketDetails.row !== undefined 
-                      ? `ROW ${ticketDetails.row}` 
-                      : ticketDetails.panel?.row !== undefined 
-                        ? `ROW ${ticketDetails.panel.row}`
-                        : 'N/A'}
-                  </p>
-                </div>
-                <div className="flex-1">
-                  <label className="text-sm font-medium text-muted-foreground">Panel</label>
-                  <p className="mt-1 text-2xl font-bold">
-                    {getScanPanelNumber(ticketScanDetails) || ticketDetails.panelId || ticketDetails.panel?.panelId || 'N/A'}
-                  </p>
-                </div>
-                <div className="flex-1">
-                  <label className="text-sm font-medium text-muted-foreground">Zone</label>
-                  <p className="mt-1 text-2xl font-bold">
-                    {ticketDetails.zone || ticketDetails.panel?.zone?.name || 'N/A'}
-                  </p>
-                </div>
-              </div>
-
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Status</label>

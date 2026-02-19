@@ -4,6 +4,8 @@ import { createFaultTicketAndAssignment, generateIncidentId, normalizeSeverity, 
 
 const router = Router();
 const DUPLICATE_WINDOW_SECONDS = 120;
+const SCAN_RETENTION_MINUTES = 30;
+const getScanRetentionCutoff = () => new Date(Date.now() - SCAN_RETENTION_MINUTES * 60 * 1000);
 const toJpegDataUrl = (rawData?: string | null) => {
   if (!rawData) return null;
   if (rawData.startsWith('data:image/')) return rawData;
@@ -72,6 +74,60 @@ const resolvePanel = async (panelCode?: string) => {
 
 const AUTO_TICKET_THRESHOLD = Number(process.env.AUTO_TICKET_THRESHOLD ?? 3); // Dusty panels threshold
 
+const enrichScansWithAlertContext = async <T extends { id: string; alertId: string | null; rowNumber: number | null }>(
+  scans: T[],
+): Promise<T[]> => {
+  if (!scans.length) return scans;
+
+  const scanIds = scans.map((scan) => scan.id);
+  const scanAlertIds = scans
+    .map((scan) => scan.alertId)
+    .filter((value): value is string => Boolean(value));
+
+  const whereOr: Array<Record<string, unknown>> = [{ scanId: { in: scanIds } }];
+  if (scanAlertIds.length > 0) {
+    whereOr.push({ alertId: { in: scanAlertIds } });
+  }
+
+  const linkedAlerts = await prisma.alert.findMany({
+    where: {
+      dismissed: false,
+      OR: whereOr,
+    },
+    select: {
+      scanId: true,
+      alertId: true,
+      row: true,
+      createdAt: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const alertByScanId = new Map<string, { alertId: string | null; row: number | null }>();
+  const alertByAlertId = new Map<string, { alertId: string | null; row: number | null }>();
+
+  linkedAlerts.forEach((alert) => {
+    if (alert.scanId && !alertByScanId.has(alert.scanId)) {
+      alertByScanId.set(alert.scanId, { alertId: alert.alertId, row: alert.row });
+    }
+    if (alert.alertId && !alertByAlertId.has(alert.alertId)) {
+      alertByAlertId.set(alert.alertId, { alertId: alert.alertId, row: alert.row });
+    }
+  });
+
+  return scans.map((scan) => {
+    const linkedByScan = alertByScanId.get(scan.id);
+    const linkedByAlertId = scan.alertId ? alertByAlertId.get(scan.alertId) : undefined;
+    const linked = linkedByScan || linkedByAlertId;
+
+    return {
+      ...scan,
+      alertId: scan.alertId ?? linked?.alertId ?? null,
+      rowNumber: scan.rowNumber ?? linked?.row ?? null,
+    };
+  });
+};
+
 // =====================================================
 // RASPBERRY PI DATA ENDPOINTS
 // =====================================================
@@ -125,6 +181,19 @@ router.post('/', async (req: Request, res: Response) => {
     }
     if (rowNumberValue == null) {
       rowNumberValue = parseRowNumberFromPanelId(panelIdValue);
+    }
+    if (rowNumberValue == null && alertIdValue) {
+      const matchedAlert = await prisma.alert.findFirst({
+        where: {
+          dismissed: false,
+          alertId: alertIdValue,
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { row: true },
+      });
+      if (typeof matchedAlert?.row === 'number') {
+        rowNumberValue = matchedAlert.row;
+      }
     }
     if (!alertIdValue && rowNumberValue != null) {
       const matchedAlert = await prisma.alert.findFirst({
@@ -191,9 +260,6 @@ router.post('/', async (req: Request, res: Response) => {
           timestamp: timestampValue,
           priority: priority || recentCandidate.priority || 'NORMAL',
           status: shouldAutoCreateTicket ? 'processing' : (recentCandidate.status || 'pending'),
-          alertId: alertIdValue ?? recentCandidate.alertId,
-          panelId: panelIdValue ?? recentCandidate.panelId,
-          rowNumber: rowNumberValue ?? recentCandidate.rowNumber,
           thermalMinTemp: thermal?.min_temp ?? recentCandidate.thermalMinTemp,
           thermalMaxTemp: thermal?.max_temp ?? recentCandidate.thermalMaxTemp,
           thermalMeanTemp: avgTemperature ?? recentCandidate.thermalMeanTemp,
@@ -219,9 +285,6 @@ router.post('/', async (req: Request, res: Response) => {
           timestamp: timestampValue,
           priority: priority || 'NORMAL',
           status: shouldAutoCreateTicket ? 'processing' : 'pending',
-          alertId: alertIdValue,
-          panelId: panelIdValue,
-          rowNumber: rowNumberValue,
           
           // Thermal data from Pi camera (for delta/anomaly detection)
           thermalMinTemp: thermal?.min_temp || null,
@@ -246,12 +309,6 @@ router.post('/', async (req: Request, res: Response) => {
       });
     }
 
-    if (alertIdValue) {
-      await prisma.alert.deleteMany({
-        where: { alertId: alertIdValue },
-      });
-    }
-    
     // Log which temperature source was used
     if (latestWeather) {
       console.log(`ðŸ“Š Using onsite ESP sensor temp: ${latestWeather.temperature}Â°C (recorded: ${latestWeather.recordedAt})`);
@@ -436,11 +493,13 @@ router.post('/', async (req: Request, res: Response) => {
 router.get('/', async (req: Request, res: Response) => {
   try {
     const { status, limit = 50 } = req.query;
+    const cutoff = getScanRetentionCutoff();
 
     const where: any = {};
     if (status) {
       where.status = status;
     }
+    where.createdAt = { gte: cutoff };
 
     const scans = await prisma.solarScan.findMany({
       where,
@@ -451,7 +510,7 @@ router.get('/', async (req: Request, res: Response) => {
       take: Number(limit)
     });
 
-    res.json(scans);
+    res.json(await enrichScansWithAlertContext(scans));
   } catch (error) {
     console.error('Error fetching solar scans:', error);
     res.status(500).json({ error: 'Failed to fetch solar scans' });
@@ -461,7 +520,9 @@ router.get('/', async (req: Request, res: Response) => {
 // GET /api/solar-scans/latest - Get latest scan
 router.get('/latest', async (_req: Request, res: Response) => {
   try {
+    const cutoff = getScanRetentionCutoff();
     const scan = await prisma.solarScan.findFirst({
+      where: { createdAt: { gte: cutoff } },
       orderBy: { timestamp: 'desc' },
       include: {
         panelDetections: true
@@ -472,7 +533,8 @@ router.get('/latest', async (_req: Request, res: Response) => {
       return res.status(404).json({ error: 'No scans found' });
     }
 
-    res.json(scan);
+    const [enrichedScan] = await enrichScansWithAlertContext([scan]);
+    res.json(enrichedScan);
   } catch (error) {
     console.error('Error fetching latest scan:', error);
     res.status(500).json({ error: 'Failed to fetch latest scan' });
@@ -482,20 +544,28 @@ router.get('/latest', async (_req: Request, res: Response) => {
 // GET /api/solar-scans/stats/summary - Get scan statistics
 router.get('/stats/summary', async (_req: Request, res: Response) => {
   try {
-    const totalScans = await prisma.solarScan.count();
-    const pendingScans = await prisma.solarScan.count({ where: { status: 'pending' } });
-    const processedScans = await prisma.solarScan.count({ where: { status: 'processed' } });
+    const cutoff = getScanRetentionCutoff();
+    const retentionWhere = { createdAt: { gte: cutoff } };
+
+    const totalScans = await prisma.solarScan.count({ where: retentionWhere });
+    const pendingScans = await prisma.solarScan.count({
+      where: { ...retentionWhere, status: 'pending' },
+    });
+    const processedScans = await prisma.solarScan.count({
+      where: { ...retentionWhere, status: 'processed' },
+    });
     
     const criticalScans = await prisma.solarScan.count({ 
-      where: { severity: 'CRITICAL' } 
+      where: { ...retentionWhere, severity: 'CRITICAL' } 
     });
     
     const highRiskScans = await prisma.solarScan.count({ 
-      where: { severity: { in: ['CRITICAL', 'HIGH'] } } 
+      where: { ...retentionWhere, severity: { in: ['CRITICAL', 'HIGH'] } } 
     });
 
     // Average thermal delta
     const avgThermalDelta = await prisma.solarScan.aggregate({
+      where: retentionWhere,
       _avg: { thermalDelta: true }
     });
 
@@ -527,7 +597,8 @@ router.get('/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Scan not found' });
     }
 
-    res.json(scan);
+    const [enrichedScan] = await enrichScansWithAlertContext([scan]);
+    res.json(enrichedScan);
   } catch (error) {
     console.error('Error fetching scan:', error);
     res.status(500).json({ error: 'Failed to fetch scan' });

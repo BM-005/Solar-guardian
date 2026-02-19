@@ -492,62 +492,84 @@ export default function PanelGrid() {
           <TabsContent value="logical" className="space-y-4">
             <Card>
               <CardHeader>
-                <CardTitle>Electrical Schematic</CardTitle>
+                <CardTitle>Logical Diagram</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-                  {zones.map(zone => {
-                    const zonePanels = panelsByZone[zone] || [];
-                    const inverterGroups = [...new Set(zonePanels.map(p => p.inverterGroup))];
-                    
-                    return (
-                      <div key={zone} className="rounded-lg border p-4">
-                        <h4 className="mb-3 font-semibold">
-                          Zone {zone} ({zonePanels.length} panels)
-                        </h4>
-                        {inverterGroups.length > 0 ? inverterGroups.map(inv => {
-                          const invPanels = zonePanels.filter(p => p.inverterGroup === inv);
-                          const strings = [...new Set(invPanels.map(p => p.stringId))];
-                          const hasFault = invPanels.some(p => p.status === 'fault');
-                          
-                          return (
-                            <div key={inv} className={cn(
-                              'mb-3 rounded-lg border p-3',
-                              hasFault && 'border-destructive bg-destructive/5'
-                            )}>
-                              <div className="mb-2 flex items-center justify-between">
-                                <span className="text-sm font-medium">{inv}</span>
-                                <Badge variant={hasFault ? 'destructive' : 'secondary'} className="text-xs">
-                                  {invPanels.reduce((sum, p) => sum + p.currentOutput, 0).toFixed(0)} W
-                                </Badge>
+                {(() => {
+                  const logicalZones = ['A', 'B'];
+                  const logicalStrings = [1, 2, 3];
+                  const logicalPanels = [1, 2, 3];
+                  const normalizeZone = (name?: string) =>
+                    (name || '').replace(/^zone\s+/i, '').trim().toUpperCase();
+
+                  const panelMap = new Map<string, PanelData>();
+                  filteredPanels.forEach((panel) => {
+                    const zone = normalizeZone(panel.zone?.name);
+                    if (!logicalZones.includes(zone)) return;
+                    if (!logicalStrings.includes(panel.row)) return;
+                    if (!logicalPanels.includes(panel.column)) return;
+                    panelMap.set(`${zone}-${panel.row}-${panel.column}`, panel);
+                  });
+
+                  const getZonePower = (zone: string) =>
+                    logicalStrings.reduce((sum, stringNo) => {
+                      return (
+                        sum +
+                        logicalPanels.reduce((rowSum, panelNo) => {
+                          const panel = panelMap.get(`${zone}-${stringNo}-${panelNo}`);
+                          return rowSum + (panel?.currentOutput || 0);
+                        }, 0)
+                      );
+                    }, 0);
+
+                  return (
+                    <div className="grid gap-6 md:grid-cols-2">
+                      {logicalZones
+                        .filter((zone) => selectedZone === 'all' || normalizeZone(selectedZone) === zone)
+                        .map((zone) => (
+                          <div key={zone} className="rounded-lg border p-2.5">
+                            <h4 className="mb-2 text-lg font-semibold">Zone {zone}</h4>
+                            <div className="rounded-lg border p-3">
+                              <div className="mb-2.5 flex items-center justify-between">
+                                <span className="text-base font-semibold">{`INV-${zone}-1`}</span>
+                                <span className="rounded-full bg-success/10 px-2.5 py-0.5 text-sm font-semibold text-success">
+                                  {`${getZonePower(zone).toFixed(0)} W`}
+                                </span>
                               </div>
-                              <div className="space-y-1">
-                                {strings.map(str => {
-                                  const strPanels = invPanels.filter(p => p.stringId === str);
-                                  return (
-                                    <div key={str} className="flex items-center gap-1">
-                                      <span className="text-xs text-muted-foreground w-16">{str}</span>
-                                      <div className="flex gap-0.5">
-                                        {strPanels.slice(0, 10).map(p => (
-                                          <div
-                                            key={p.id}
-                                            className={cn('h-2 w-2 rounded-sm', statusColors[p.status] || 'bg-gray-400')}
-                                          />
-                                        ))}
-                                      </div>
-                                    </div>
-                                  );
-                                })}
+                              <div className="space-y-2">
+                              {logicalStrings.map((stringNo) => (
+                                <div key={`${zone}-${stringNo}`} className="flex items-center gap-2.5">
+                                  <span className="w-16 text-xs text-muted-foreground">{`STR-${zone}-${stringNo}`}</span>
+                                  <div className="relative flex items-center gap-1 px-1.5">
+                                    <div className="absolute left-3 right-3 h-px bg-muted-foreground/35" />
+                                    {logicalPanels.map((panelNo) => {
+                                      const key = `${zone}-${stringNo}-${panelNo}`;
+                                      const panel = panelMap.get(key);
+                                      return (
+                                        <div
+                                          key={key}
+                                          className={cn(
+                                            'z-10 h-2.5 w-2.5 rounded-full border border-background',
+                                            panel ? (statusColors[panel.status] || 'bg-gray-400') : 'bg-muted'
+                                          )}
+                                          title={
+                                            panel
+                                              ? `${panel.panelId} - ${panel.status}`
+                                              : `Zone ${zone} / String ${stringNo} / Panel ${panelNo} - not mapped`
+                                          }
+                                        />
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              ))}
                               </div>
                             </div>
-                          );
-                        }) : (
-                          <p className="text-sm text-muted-foreground">No inverters configured</p>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                          </div>
+                        ))}
+                    </div>
+                  );
+                })()}
               </CardContent>
             </Card>
           </TabsContent>

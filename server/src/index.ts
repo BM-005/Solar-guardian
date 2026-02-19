@@ -471,6 +471,19 @@ io.on('connection', (socket) => {
       if (rowNumberValue == null) {
         rowNumberValue = parseRowNumberFromPanelId(panelIdValue);
       }
+      if (rowNumberValue == null && alertIdValue) {
+        const matchedAlert = await prisma.alert.findFirst({
+          where: {
+            dismissed: false,
+            alertId: alertIdValue,
+          },
+          orderBy: { createdAt: 'desc' },
+          select: { row: true },
+        });
+        if (typeof matchedAlert?.row === 'number') {
+          rowNumberValue = matchedAlert.row;
+        }
+      }
       if (!alertIdValue && rowNumberValue != null) {
         const matchedAlert = await prisma.alert.findFirst({
           where: {
@@ -529,9 +542,6 @@ io.on('connection', (socket) => {
             timestamp: receivedAt,
             priority: priority || recentCandidate.priority || 'NORMAL',
             status: recentCandidate.status || 'pending',
-            alertId: alertIdValue ?? recentCandidate.alertId,
-            panelId: panelIdValue ?? recentCandidate.panelId,
-            rowNumber: rowNumberValue ?? recentCandidate.rowNumber,
             riskScore: riskScore ?? recentCandidate.riskScore,
             severity: severity ?? recentCandidate.severity,
             thermalMinTemp: thermalMinTemp ?? recentCandidate.thermalMinTemp,
@@ -571,9 +581,6 @@ io.on('connection', (socket) => {
             timestamp: receivedAt,
             priority,
             status: 'pending',
-            alertId: alertIdValue,
-            panelId: panelIdValue,
-            rowNumber: rowNumberValue,
             riskScore,
             severity,
             thermalMinTemp,
@@ -642,12 +649,6 @@ io.on('connection', (socket) => {
       piResults.unshift(resultForClients);
       if (piResults.length > MAX_PI_RESULTS) {
         piResults.length = MAX_PI_RESULTS;
-      }
-
-      if (alertIdValue) {
-        await prisma.alert.deleteMany({
-          where: { alertId: alertIdValue },
-        });
       }
 
       io.emit('new_result', resultForClients);
