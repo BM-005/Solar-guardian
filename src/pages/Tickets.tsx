@@ -31,6 +31,7 @@ import {
 interface TicketFromAPI {
   id: string;
   ticketNumber: string;
+  scanPanelId?: string | null;
   panelId: string | null;
   faultId: string | null;
   status: 'open' | 'in_progress' | 'closed';
@@ -91,6 +92,7 @@ const statusIcons: Record<string, React.ComponentType<{ className?: string }>> =
 
 export default function Tickets() {
   const [tickets, setTickets] = useState<TicketFromAPI[]>([]);
+  const [ticketPanelById, setTicketPanelById] = useState<Record<string, string>>({});
   const [technicians, setTechnicians] = useState<{ id: string; name: string; avatar: string | null }[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -102,8 +104,70 @@ export default function Tickets() {
   const [ticketDetailsOpen, setTicketDetailsOpen] = useState(false);
   const [ticketDetails, setTicketDetails] = useState<any>(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
-  const [ticketAlertMeta, setTicketAlertMeta] = useState<{ scanId?: string | null } | null>(null);
+  const [ticketAlertMeta, setTicketAlertMeta] = useState<{ alertId?: string | null; scanId?: string | null } | null>(null);
   const [ticketScanDetails, setTicketScanDetails] = useState<any>(null);
+
+  const getScanPanelNumber = (scan: any) => {
+    if (!scan || !Array.isArray(scan.panelDetections) || scan.panelDetections.length === 0) return null;
+    const first = scan.panelDetections.find((p: any) => p.panelNumber) || scan.panelDetections[0];
+    return first?.panelNumber || null;
+  };
+
+  const loadTicketPanelMap = async (ticketRows: TicketFromAPI[]) => {
+    try {
+      if (!ticketRows.length) {
+        setTicketPanelById({});
+        return;
+      }
+
+      const alertsRes = await fetch('/api/alerts');
+      if (!alertsRes.ok) {
+        setTicketPanelById({});
+        return;
+      }
+
+      const alerts = await alertsRes.json();
+      const ticketIds = new Set(ticketRows.map((t) => t.id));
+      const ticketScanPairs = alerts
+        .filter((a: any) => a.ticketId && a.scanId && ticketIds.has(a.ticketId))
+        .map((a: any) => ({ ticketId: a.ticketId as string, scanId: a.scanId as string }));
+
+      const uniqueScanIds = Array.from(new Set(ticketScanPairs.map((p: { scanId: string }) => p.scanId)));
+      if (!uniqueScanIds.length) {
+        setTicketPanelById({});
+        return;
+      }
+
+      const scanEntries = await Promise.all(
+        uniqueScanIds.map(async (scanId) => {
+          try {
+            const scanRes = await fetch(`/api/solar-scans/${scanId}`);
+            if (!scanRes.ok) return [scanId, null] as const;
+            const scan = await scanRes.json();
+            return [scanId, getScanPanelNumber(scan)] as const;
+          } catch {
+            return [scanId, null] as const;
+          }
+        })
+      );
+
+      const panelByScanId = new Map<string, string>();
+      scanEntries.forEach(([scanId, panel]) => {
+        if (panel) panelByScanId.set(scanId, panel);
+      });
+
+      const panelByTicket: Record<string, string> = {};
+      ticketScanPairs.forEach(({ ticketId, scanId }: { ticketId: string; scanId: string }) => {
+        const panel = panelByScanId.get(scanId);
+        if (panel) panelByTicket[ticketId] = panel;
+      });
+
+      setTicketPanelById(panelByTicket);
+    } catch (err) {
+      console.warn('Failed to build ticket panel map from scans:', err);
+      setTicketPanelById({});
+    }
+  };
 
   useEffect(() => {
     async function fetchData() {
@@ -118,6 +182,9 @@ export default function Tickets() {
               .filter((t: TicketFromAPI) => t.assignedTechnician)
               .map((t: TicketFromAPI) => t.assignedTechnician!);
             setTechnicians(techs);
+            await loadTicketPanelMap(data);
+          } else {
+            setTicketPanelById({});
           }
         }
       } catch (err) {
@@ -145,12 +212,38 @@ export default function Tickets() {
     closed: tickets.filter(t => t.status === 'closed').length,
   };
 
+  const getTechnician = (id?: string | null) => technicians.find(t => t.id === id);
+  const getRelativeTime = (dateStr: string | null) => {
+    if (!dateStr) return 'Unknown';
+    return formatDistanceToNow(new Date(dateStr), { addSuffix: true });
+  };
+  const getPanelId = (ticket: TicketFromAPI) =>
+    ticket.scanPanelId || ticketPanelById[ticket.id] || ticket.panel?.panelId || 'N/A';
+  const getTicketSequence = (ticketNumber?: string | null) => {
+    if (!ticketNumber) return null;
+    const match = ticketNumber.match(/(?:FAULT ID-)?(?:FK|TK|TCK)-(\d+)/i);
+    if (!match) return null;
+    const parsed = Number.parseInt(match[1], 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const getDisplayTicketLabel = (ticket: TicketFromAPI, index?: number) => {
+    const sequence = getTicketSequence(ticket.ticketNumber);
+    if (sequence != null) return `TK-${String(sequence).padStart(3, '0')}`;
+    if (typeof index === 'number' && index >= 0) return `TK-${String(index + 1).padStart(3, '0')}`;
+    return ticket.ticketNumber || 'N/A';
+  };
+
   const filteredTickets = tickets.filter(ticket => {
     const statusMatch = statusFilter === 'all' ||
       (statusFilter === 'in-progress' ? ticket.status === 'in_progress' : ticket.status === statusFilter);
+    const mappedPanelId = (ticketPanelById[ticket.id] || '').toLowerCase();
+    const normalizedSearch = searchQuery.toLowerCase();
     const searchMatch =
-      ticket.ticketNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (ticket.panelId && ticket.panelId.toLowerCase().includes(searchQuery.toLowerCase()));
+      ticket.ticketNumber.toLowerCase().includes(normalizedSearch) ||
+      getDisplayTicketLabel(ticket).toLowerCase().includes(normalizedSearch) ||
+      (ticket.panelId && ticket.panelId.toLowerCase().includes(normalizedSearch)) ||
+      mappedPanelId.includes(normalizedSearch);
     const priorityMatch = priorityFilter === 'all' || ticket.priority === priorityFilter;
     const technicianMatch = technicianFilter === 'all' || ticket.assignedTechnicianId === technicianFilter;
     return statusMatch && searchMatch && priorityMatch && technicianMatch;
@@ -158,39 +251,6 @@ export default function Tickets() {
   const sortedTickets = [...filteredTickets].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
-
-  const getTechnician = (id?: string | null) => technicians.find(t => t.id === id);
-  const getRelativeTime = (dateStr: string | null) => {
-    if (!dateStr) return 'Unknown';
-    return formatDistanceToNow(new Date(dateStr), { addSuffix: true });
-  };
-  const getPanelId = (ticket: TicketFromAPI) => {
-    // If zone and row are available (from alert-based tickets), show those
-    if (ticket.zone && ticket.row !== null) {
-      return `Zone ${ticket.zone}, Row ${ticket.row}`;
-    }
-    // Fallback: try to get from panel data (for existing tickets)
-    if (ticket.panel?.zone?.name && ticket.panel?.row !== undefined) {
-      return `Zone ${ticket.panel.zone.name}, Row ${ticket.panel.row}`;
-    }
-    // Fallback to panel ID
-    if (ticket.panelId) return ticket.panelId;
-    if (ticket.panel?.panelId) return ticket.panel.panelId;
-    return 'N/A';
-  };
-  const getScanPanelNumber = (scan: any) => {
-    if (!scan || !Array.isArray(scan.panelDetections) || scan.panelDetections.length === 0) return null;
-    const first = scan.panelDetections.find((p: any) => p.panelNumber) || scan.panelDetections[0];
-    return first?.panelNumber || null;
-  };
-  const getDisplayTicketLabel = (ticket: TicketFromAPI) => {
-    const row = ticket.panel?.row;
-    const column = ticket.panel?.column;
-    if (typeof row === 'number' && typeof column === 'number') {
-      return `${ticket.ticketNumber} • ROW ${row} - P${column}`;
-    }
-    return ticket.ticketNumber || 'N/A';
-  };
 
   const handleViewTicket = async (ticket: TicketFromAPI) => {
     setSelectedTicket(ticket);
@@ -211,9 +271,11 @@ export default function Tickets() {
         const alertsRes = await fetch('/api/alerts');
         if (alertsRes.ok) {
           const alerts = await alertsRes.json();
-          const alert = alerts.find((a: any) => a.ticketId === ticket.id);
+          const alert =
+            alerts.find((a: any) => a.ticketId === ticket.id && a.scanId) ||
+            alerts.find((a: any) => a.ticketId === ticket.id);
           if (alert) {
-            setTicketAlertMeta({ scanId: alert.scanId || null });
+            setTicketAlertMeta({ alertId: alert.alertId || null, scanId: alert.scanId || null });
             if (alert.scanId) {
               const scanRes = await fetch(`/api/solar-scans/${alert.scanId}`);
               if (scanRes.ok) {
@@ -423,7 +485,11 @@ export default function Tickets() {
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Panel ID</label>
                   <p className="mt-1">
-                    {getScanPanelNumber(ticketScanDetails) || getPanelId(ticketDetails)}
+                    {selectedTicket?.scanPanelId ||
+                      (selectedTicket && ticketPanelById[selectedTicket.id]) ||
+                      ticketDetails?.panel?.panelId ||
+                      getScanPanelNumber(ticketScanDetails) ||
+                      'N/A'}
                   </p>
                 </div>
                 <div>
@@ -449,7 +515,7 @@ export default function Tickets() {
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Alert ID</label>
                   <p className="mt-1 font-mono text-xs">
-                    {ticketAlertMeta?.scanId || 'N/A'}
+                    {ticketAlertMeta?.alertId || 'N/A'}
                   </p>
                 </div>
               </div>
@@ -564,7 +630,7 @@ export default function Tickets() {
         </div>
       ) : (
         <div className="space-y-4">
-          {sortedTickets.map((ticket) => {
+          {sortedTickets.map((ticket, index) => {
             const technician = getTechnician(ticket.assignedTechnicianId);
             const statusKey = ticket.status === 'in_progress' ? 'in-progress' : ticket.status;
             const StatusIcon = statusIcons[ticket.status] || AlertTriangle;
@@ -682,4 +748,5 @@ export default function Tickets() {
     </div>
   );
 }
+
 

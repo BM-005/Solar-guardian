@@ -7,7 +7,7 @@ import prisma from './db.js';
 import path from 'path';
 import fs from 'fs';
 import { networkInterfaces } from 'os';
-import { createFaultTicketAndAssignment, generateIncidentId, normalizeSeverity, generateTicketNumber } from './routes/automation.js';
+import { createFaultTicketAndAssignment, generateIncidentId, normalizeSeverity } from './routes/automation.js';
 
 // Routes
 import panelsRouter from './routes/panels.js';
@@ -343,28 +343,6 @@ io.on('connection', (socket) => {
         },
       });
 
-      // Create a ticket for this fault
-      // Use generateTicketNumber from automation.ts for FK-XXX format
-      const ticketNumber = await generateTicketNumber();
-      
-      await prisma.ticket.create({
-        data: {
-          ticketNumber,
-          panelId: data.panelId,
-          faultId: faultDetection.id,
-          status: 'open',
-          priority: data.analysis?.severity === 'high' ? 'high' : 'medium',
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          description: data.analysis?.description || 'Fault detected via thermal imaging',
-          faultType: data.analysis?.faultType || 'unknown',
-          droneImageUrl: data.rgbImage || null,
-          thermalImageUrl: data.thermalImage || null,
-          aiAnalysis: data.analysis?.description || null,
-          recommendedAction: data.analysis?.recommendedAction || null,
-        },
-      });
-
       io.emit('new-fault-detection', {
         panelId: data.panelId,
         faultDetection,
@@ -377,7 +355,7 @@ io.on('connection', (socket) => {
         message: 'Image and analysis stored successfully',
       });
 
-      console.log('Fault detection and ticket created for panel:', data.panelId);
+      console.log('Fault detection saved for panel (no direct ticket creation):', data.panelId);
     } catch (error) {
       console.error('Error processing thermal image:', error);
       socket.emit('image-received', {
@@ -459,8 +437,9 @@ io.on('connection', (socket) => {
         });
       });
 
+      const panelDetectedDustyCount = panelCropsForClients.filter((crop) => crop.status === 'DUSTY').length;
       const dustyPanelCount =
-        data.rgb_stats?.dusty ?? panelCropsForClients.filter((crop) => crop.status === 'DUSTY').length;
+        data.rgb_stats?.dusty ?? panelDetectedDustyCount;
       const cleanPanelCount =
         data.rgb_stats?.clean ?? panelCropsForClients.filter((crop) => crop.status === 'CLEAN').length;
       const totalPanels = data.rgb_stats?.total ?? panelCropsForClients.length;
@@ -619,9 +598,12 @@ io.on('connection', (socket) => {
       const normalizedSeverity = normalizeSeverity(severity); // This converts MODERATE->medium, CRITICAL->critical, etc.
       const normalizedPriority = String(priority || 'NORMAL').toUpperCase();
       const hasFaulty = panelCropsForClients.some((crop) => crop.status === 'FAULTY');
-      const hasScanIssues = hasFaulty || dustyPanelCount > 0;
+      const actionableDustyCount = panelDetectedDustyCount;
+      const hasScanIssues = hasFaulty || actionableDustyCount > 0;
       const shouldAutoCreateTicket =
         hasScanIssues && (normalizedPriority === 'MEDIUM' || normalizedPriority === 'HIGH');
+      const scanPanelId =
+        panelCropsForClients.find((crop) => crop.status === 'FAULTY' || crop.status === 'DUSTY')?.panel_number;
 
       if (shouldAutoCreateTicket) {
         // Update scan status to processing
@@ -643,12 +625,12 @@ io.on('connection', (socket) => {
               const incidentId = generateIncidentId();
               const derivedFaultType = hasFaulty
                 ? 'thermal_fault'
-                : dustyPanelCount >= AUTO_TICKET_THRESHOLD
+                : actionableDustyCount >= AUTO_TICKET_THRESHOLD
                 ? 'dust_accumulation'
                 : 'scan_anomaly';
               const effectiveFaultType = hasFaulty
                 ? 'thermal_fault'
-                : dustyPanelCount > 0
+                : actionableDustyCount > 0
                 ? 'dust_accumulation'
                 : derivedFaultType;
 
@@ -662,10 +644,10 @@ io.on('connection', (socket) => {
                 description: `Automated scan processing - ${
                   hasFaulty
                     ? 'thermal fault detected'
-                    : 'dust accumulation: ' + dustyPanelCount + ' panels'
+                    : 'dust accumulation: ' + actionableDustyCount + ' panels'
                 }`,
                 aiConfidence: Math.max(0, Math.min(100, riskScore)),
-                aiAnalysis: `Scan severity: ${severity}; dusty panels: ${dustyPanelCount}; faulty detections: ${
+                aiAnalysis: `Scan severity: ${severity}; dusty panels: ${actionableDustyCount}; faulty detections: ${
                   hasFaulty ? 'yes' : 'no'
                 }`,
                 recommendedAction: hasFaulty
@@ -676,6 +658,7 @@ io.on('connection', (socket) => {
                 locationX: 0,
                 locationY: 0,
                 scanId: savedScan.id,
+                scanPanelId,
               });
 
               // Update scan status to processed

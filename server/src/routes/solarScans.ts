@@ -94,6 +94,10 @@ router.post('/', async (req: Request, res: Response) => {
     const normalizedSeverity = normalizeSeverity(severity);
     const normalizedPriority = String(priority || 'NORMAL').toUpperCase();
     const hasScanIssues = hasFaulty || dustyPanelCount > 0;
+    const scanPanelId =
+      panels?.find((p: any) => p.status === 'FAULTY' || p.status === 'DUSTY')?.panel_number ||
+      panels?.find((p: any) => p.status === 'FAULTY' || p.status === 'DUSTY')?.panelNumber ||
+      null;
 
     // Determine if we should automatically create a ticket
     // Tickets should be created only for scan issues (dusty/faulty)
@@ -322,6 +326,7 @@ router.post('/', async (req: Request, res: Response) => {
               locationX: 0,
               locationY: 0,
               scanId: scan.id,
+              scanPanelId: scanPanelId || undefined,
               zone: zoneName,
               row: rowNum,
               status: alertStatus,

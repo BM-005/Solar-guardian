@@ -70,12 +70,21 @@ export const generateIncidentId = () =>
 // Export generateTicketNumber for use in index.ts
 export const generateTicketNumber = async (): Promise<string> => {
   try {
-    // Scan recent ticket numbers and increment the highest recognized sequence.
-    const recentTickets = await prisma.ticket.findMany({
-      orderBy: { createdAt: 'desc' },
-      select: { ticketNumber: true },
-      take: 500,
-    });
+    // Scan recent ticket numbers and ticket-created automation events so numbering
+    // keeps increasing even if older tickets were resolved and removed.
+    const [recentTickets, recentTicketEvents] = await Promise.all([
+      prisma.ticket.findMany({
+        orderBy: { createdAt: 'desc' },
+        select: { ticketNumber: true },
+        take: 1000,
+      }),
+      prisma.automationEvent.findMany({
+        where: { stage: 'ticket_created' },
+        orderBy: { createdAt: 'desc' },
+        select: { payload: true },
+        take: 1000,
+      }),
+    ]);
 
     let maxNumber = 0;
     // Support TK- format (e.g., TK-001, TK-002, etc.)
@@ -94,6 +103,21 @@ export const generateTicketNumber = async (): Promise<string> => {
       }
     }
 
+    for (const event of recentTicketEvents) {
+      const payload = event.payload as Record<string, unknown> | null;
+      const eventTicketNumber = typeof payload?.ticketNumber === 'string' ? payload.ticketNumber : null;
+      if (!eventTicketNumber) continue;
+
+      for (const pattern of patterns) {
+        const match = eventTicketNumber.match(pattern);
+        if (!match) continue;
+        const current = Number.parseInt(match[1], 10);
+        if (Number.isFinite(current)) {
+          maxNumber = Math.max(maxNumber, current);
+        }
+        break;
+      }
+    }
     return `TK-${(maxNumber + 1).toString().padStart(3, '0')}`;
   } catch (error) {
     // Fallback to timestamp-based if database query fails
@@ -224,6 +248,7 @@ const selectTechnician = async (tx: Prisma.TransactionClient, faultType: string)
 export const createFaultTicketAndAssignment = async (input: {
   incidentId: string;
   panelId: string;
+  scanPanelId?: string;
   faultType: string;
   severity: string;
   detectedAt: Date;
@@ -240,6 +265,36 @@ export const createFaultTicketAndAssignment = async (input: {
   row?: number;
   status?: string;
 }) => {
+  if (input.scanId) {
+    const sourceScan = await prisma.solarScan.findUnique({
+      where: { id: input.scanId },
+      select: {
+        priority: true,
+        panelDetections: {
+          select: { status: true },
+        },
+      },
+    });
+
+    const scanPriority = String(sourceScan?.priority || 'NORMAL').toUpperCase();
+    const hasActionablePanel =
+      sourceScan?.panelDetections.some(
+        (detection) => detection.status === 'DUSTY' || detection.status === 'FAULTY'
+      ) ?? false;
+
+    if (!sourceScan || !hasActionablePanel || (scanPriority !== 'MEDIUM' && scanPriority !== 'HIGH')) {
+      return {
+        deduplicated: false,
+        skipped: true,
+        reason: 'scan_not_actionable_for_ticket',
+        faultId: null,
+        ticketId: null,
+        ticketNumber: null,
+        assignedTechnicianId: null,
+      };
+    }
+  }
+
   return prisma.$transaction(async (tx) => {
     await createAutomationEvent(tx, {
       eventType: 'PanelErrorDetected',
@@ -349,6 +404,7 @@ export const createFaultTicketAndAssignment = async (input: {
       ticketId: ticket.id,
       payload: {
         ticketNumber: ticket.ticketNumber,
+        scanPanelId: input.scanPanelId ?? null,
       },
     });
 
@@ -485,11 +541,20 @@ router.post('/scan/:scanId/process', async (req: Request, res: Response) => {
 
     const severity = normalizeSeverity(scan.severity?.toLowerCase());
     const normalizedPriority = String(scan.priority || 'NORMAL').toUpperCase();
-    const hasFaulty = scan.panelDetections.some((detection) => detection.status === 'FAULTY');
-    const hasDust = scan.panelDetections.some((detection) => detection.status === 'DUSTY') || scan.dustyPanelCount > 0;
+    const hasPanelDetections = scan.panelDetections.length > 0;
+    const hasFaulty = hasPanelDetections
+      ? scan.panelDetections.some((detection) => detection.status === 'FAULTY')
+      : false;
+    const hasDust = hasPanelDetections
+      ? scan.panelDetections.some((detection) => detection.status === 'DUSTY')
+      : scan.dustyPanelCount > 0;
+    const scanPanelId =
+      scan.panelDetections.find((detection) => detection.status === 'FAULTY' || detection.status === 'DUSTY')
+        ?.panelNumber ??
+      undefined;
     const hasScanIssues = hasFaulty || hasDust;
     const shouldCreateTicket =
-      hasScanIssues && (Boolean(body.forceTicket) || normalizedPriority === 'HIGH' || normalizedPriority === 'MEDIUM');
+      hasScanIssues && (normalizedPriority === 'HIGH' || normalizedPriority === 'MEDIUM');
 
     const incidentId = body.incidentId?.trim() || generateIncidentId();
 
@@ -554,7 +619,22 @@ router.post('/scan/:scanId/process', async (req: Request, res: Response) => {
       locationX: 0,
       locationY: 0,
       scanId: scan.id,
+      scanPanelId,
     });
+
+    if (!result.ticketId) {
+      await prisma.solarScan.update({
+        where: { id: scan.id },
+        data: { status: 'processed', updatedAt: new Date() },
+      });
+
+      return res.json({
+        incidentId,
+        scanId: scan.id,
+        ticketCreated: false,
+        reason: 'Scan is not actionable for ticket creation',
+      });
+    }
 
     await prisma.solarScan.update({
       where: { id: scan.id },

@@ -58,12 +58,81 @@ router.post('/', async (req: Request, res: Response) => {
 router.get('/', async (req: Request, res: Response) => {
   try {
     const { status, priority } = req.query;
+    const scanTicketEvents = await prisma.automationEvent.findMany({
+      where: {
+        stage: 'ticket_created',
+        scanId: { not: null },
+        ticketId: { not: null },
+      },
+      select: { ticketId: true, scanId: true, payload: true },
+    });
+
+    const ticketToScanMap = new Map<string, string>();
+    const ticketToEventPanelMap = new Map<string, string>();
+    for (const event of scanTicketEvents) {
+      if (!event.ticketId || !event.scanId) continue;
+      if (!ticketToScanMap.has(event.ticketId)) {
+        ticketToScanMap.set(event.ticketId, event.scanId);
+      }
+      if (!ticketToEventPanelMap.has(event.ticketId)) {
+        const payload = event.payload as Record<string, unknown> | null;
+        const panelFromEvent = typeof payload?.scanPanelId === 'string' ? payload.scanPanelId : null;
+        if (panelFromEvent) {
+          ticketToEventPanelMap.set(event.ticketId, panelFromEvent);
+        }
+      }
+    }
+
+    const scanLinkedTicketIds = Array.from(ticketToScanMap.keys());
+
+    if (!scanLinkedTicketIds.length) {
+      return res.json([]);
+    }
+
+    const uniqueScanIds = Array.from(new Set(Array.from(ticketToScanMap.values())));
+    const scans = await prisma.solarScan.findMany({
+      where: { id: { in: uniqueScanIds } },
+      select: {
+        id: true,
+        priority: true,
+        panelDetections: {
+          select: { panelNumber: true, status: true },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+
+    const scanToPanelNumber = new Map<string, string>();
+    const actionableScanIds = new Set<string>();
+    for (const scan of scans) {
+      const panelNumber =
+        scan.panelDetections.find(
+          (panel) => panel.status === 'FAULTY' || panel.status === 'DUSTY'
+        )?.panelNumber ?? null;
+      const scanPriority = String(scan.priority || 'NORMAL').toUpperCase();
+      const hasActionablePanel = scan.panelDetections.some(
+        (panel) => panel.status === 'FAULTY' || panel.status === 'DUSTY'
+      );
+      if (hasActionablePanel && (scanPriority === 'MEDIUM' || scanPriority === 'HIGH')) {
+        actionableScanIds.add(scan.id);
+      }
+      if (panelNumber) {
+        scanToPanelNumber.set(scan.id, panelNumber);
+      }
+    }
+
+    const scanQualifiedTicketIds = scanLinkedTicketIds.filter((ticketId) => {
+      const scanId = ticketToScanMap.get(ticketId);
+      if (!scanId) return false;
+      return actionableScanIds.has(scanId);
+    });
+
+    if (!scanQualifiedTicketIds.length) {
+      return res.json([]);
+    }
 
     const where: any = {
-      OR: [
-        { droneImageUrl: { not: null } },
-        { thermalImageUrl: { not: null } },
-      ],
+      id: { in: scanQualifiedTicketIds },
     };
 
     if (status) {
@@ -104,7 +173,19 @@ router.get('/', async (req: Request, res: Response) => {
       take: 200,
     });
 
-    res.json(tickets);
+    const ticketsWithScanPanel = tickets.map((ticket) => {
+      const scanId = ticketToScanMap.get(ticket.id);
+      const scanPanelId =
+        (scanId ? scanToPanelNumber.get(scanId) ?? null : null) ??
+        ticketToEventPanelMap.get(ticket.id) ??
+        null;
+      return {
+        ...ticket,
+        scanPanelId,
+      };
+    });
+
+    res.json(ticketsWithScanPanel);
   } catch (error) {
     console.error('Error fetching tickets:', error);
     res.status(500).json({ error: 'Failed to fetch tickets' });
