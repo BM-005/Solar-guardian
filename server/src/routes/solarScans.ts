@@ -258,10 +258,7 @@ router.post('/', async (req: Request, res: Response) => {
     if (!panelIdValue) {
       panelIdValue = scanPanelId;
     }
-    if (rowNumberValue == null) {
-      rowNumberValue = parseRowNumberFromPanelId(panelIdValue);
-    }
-    if (rowNumberValue == null && alertIdValue) {
+    if (alertIdValue) {
       const matchedAlert = await prisma.alert.findFirst({
         where: {
           dismissed: false,
@@ -273,6 +270,8 @@ router.post('/', async (req: Request, res: Response) => {
       if (typeof matchedAlert?.row === 'number') {
         rowNumberValue = matchedAlert.row;
       }
+    } else if (rowNumberValue == null) {
+      rowNumberValue = parseRowNumberFromPanelId(panelIdValue);
     }
     if (!alertIdValue && rowNumberValue != null) {
       const matchedAlert = await prisma.alert.findFirst({

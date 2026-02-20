@@ -298,10 +298,40 @@ export default function Scans() {
     let score = 0;
     if (scan.rgbImageUrl) score += 2;
     if (scan.thermalImageUrl) score += 2;
+    if (scan.alertId) score += 2;
     if (scan.piReport) score += 3;
     if (scan.panelDetections?.length) score += 2;
     if (scan.totalPanels > 0) score += 1;
     return score;
+  };
+
+  const mergeScans = (primary: SolarScanFromAPI, secondary: SolarScanFromAPI) => {
+    const merged: SolarScanFromAPI = {
+      ...secondary,
+      ...primary,
+      alertId: primary.alertId || secondary.alertId || null,
+      panelId: primary.panelId || secondary.panelId || null,
+      rowNumber: primary.rowNumber ?? secondary.rowNumber ?? null,
+      thermalImageUrl: primary.thermalImageUrl || secondary.thermalImageUrl || null,
+      rgbImageUrl: primary.rgbImageUrl || secondary.rgbImageUrl || null,
+      thermalMinTemp: primary.thermalMinTemp ?? secondary.thermalMinTemp ?? null,
+      thermalMaxTemp: primary.thermalMaxTemp ?? secondary.thermalMaxTemp ?? null,
+      thermalMeanTemp: primary.thermalMeanTemp ?? secondary.thermalMeanTemp ?? null,
+      thermalDelta: primary.thermalDelta ?? secondary.thermalDelta ?? null,
+      riskScore: primary.riskScore ?? secondary.riskScore ?? null,
+      severity: primary.severity ?? secondary.severity ?? null,
+      deviceId: primary.deviceId ?? secondary.deviceId ?? null,
+      deviceName: primary.deviceName ?? secondary.deviceName ?? null,
+      panelDetections:
+        primary.panelDetections && primary.panelDetections.length > 0
+          ? primary.panelDetections
+          : secondary.panelDetections,
+      piReport: primary.piReport || secondary.piReport,
+      thermalFault: primary.thermalFault ?? secondary.thermalFault ?? null,
+      baselineDelta: primary.baselineDelta ?? secondary.baselineDelta ?? null,
+    };
+
+    return merged;
   };
 
   const allScans = Array.from(
@@ -318,16 +348,20 @@ export default function Scans() {
         const existingScore = getScanCompletenessScore(existing);
         const nextScore = getScanCompletenessScore(scan);
         if (nextScore > existingScore) {
-          acc.set(key, scan);
+          acc.set(key, mergeScans(scan, existing));
           return acc;
         }
         if (nextScore === existingScore) {
           const existingTs = new Date(existing.createdAt || existing.updatedAt || existing.timestamp).getTime();
           const nextTs = new Date(scan.createdAt || scan.updatedAt || scan.timestamp).getTime();
           if (!Number.isNaN(nextTs) && (Number.isNaN(existingTs) || nextTs >= existingTs)) {
-            acc.set(key, scan);
+            acc.set(key, mergeScans(scan, existing));
+          } else {
+            acc.set(key, mergeScans(existing, scan));
           }
+          return acc;
         }
+        acc.set(key, mergeScans(existing, scan));
         return acc;
       }, new Map())
       .values()
