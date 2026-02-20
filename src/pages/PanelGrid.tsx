@@ -541,8 +541,9 @@ export default function PanelGrid() {
                     panelMap.set(`${zone}-${panel.row}-${panel.column}`, panel);
                   });
 
-                  const getZonePower = (zone: string) =>
-                    logicalStrings.reduce((sum, stringNo) => {
+                  const getZonePower = (zone: string) => {
+                    if (zone === 'B') return 0;
+                    return logicalStrings.reduce((sum, stringNo) => {
                       return (
                         sum +
                         logicalPanels.reduce((rowSum, panelNo) => {
@@ -551,6 +552,7 @@ export default function PanelGrid() {
                         }, 0)
                       );
                     }, 0);
+                  };
 
                   return (
                     <div className="grid gap-6 md:grid-cols-2">
@@ -634,7 +636,7 @@ export default function PanelGrid() {
                             </Badge>
                           </TableCell>
                           <TableCell>{panel.efficiency?.toFixed(1) || '0'}%</TableCell>
-                          <TableCell>{panel.currentOutput || 0} W</TableCell>
+                          <TableCell>{Number(panel.currentOutput ?? 0).toFixed(2)} W</TableCell>
                           <TableCell>{panel.sensorVoltage?.toFixed(2) || 'N/A'} V</TableCell>
                           <TableCell>{panel.sensorCurrentMa !== null && panel.sensorCurrentMa !== undefined ? (panel.sensorCurrentMa / 1000).toFixed(3) : 'N/A'} A</TableCell>
                           <TableCell>{panel.temperature?.toFixed(1) || '0'}°C</TableCell>
