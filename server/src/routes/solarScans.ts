@@ -15,10 +15,29 @@ const toJpegDataUrl = (rawData?: string | null) => {
 
 const parseRowNumberFromPanelId = (panelId?: string | null): number | null => {
   if (!panelId) return null;
-  const match = String(panelId).match(/(\d+)/);
-  if (!match) return null;
-  const value = Number.parseInt(match[1], 10);
-  return Number.isFinite(value) ? value : null;
+  const normalized = String(panelId).trim().toUpperCase();
+
+  // Canonical format: PNL-A0201 -> row 02
+  const canonicalMatch = normalized.match(/^PNL-[A-Z](\d{2})\d{2}$/);
+  if (canonicalMatch) {
+    const row = Number.parseInt(canonicalMatch[1], 10);
+    return Number.isFinite(row) ? row : null;
+  }
+
+  // Short format: A0201 -> row 02
+  const compactMatch = normalized.match(/^[A-Z](\d{2})\d{2}$/);
+  if (compactMatch) {
+    const row = Number.parseInt(compactMatch[1], 10);
+    return Number.isFinite(row) ? row : null;
+  }
+
+  // Legacy fallback for values like 201/301 where row is the hundreds digit.
+  const numberMatch = normalized.match(/(\d+)/);
+  if (!numberMatch) return null;
+  const value = Number.parseInt(numberMatch[1], 10);
+  if (!Number.isFinite(value)) return null;
+  if (value >= 100) return Math.floor(value / 100);
+  return value;
 };
 
 const pickString = (source: Record<string, unknown>, keys: string[]): string | null => {
@@ -276,6 +295,15 @@ router.post('/', async (req: Request, res: Response) => {
     if (!panelIdValue) {
       panelIdValue = scanPanelId;
     }
+    let resolvedPanel = panelIdValue ? await resolvePanel(panelIdValue) : null;
+    if (!resolvedPanel && scanPanelId) {
+      resolvedPanel = await resolvePanel(scanPanelId);
+    }
+
+    if (rowNumberValue == null && resolvedPanel?.row != null) {
+      rowNumberValue = resolvedPanel.row;
+    }
+
     if (alertIdValue) {
       const matchedAlert = await prisma.alert.findFirst({
         where: {
@@ -485,7 +513,7 @@ router.post('/', async (req: Request, res: Response) => {
     ) {
       try {
         // Try to find a panel to get zone and row info
-        const panel = await resolvePanel();
+        const panel = resolvedPanel ?? await resolvePanel(panelIdValue || scanPanelId || undefined);
         
         if (panel) {
           // Get zone name from the panel's relation

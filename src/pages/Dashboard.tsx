@@ -612,7 +612,7 @@ export default function Dashboard() {
           value={metrics.currentGeneration}
           suffix="A"
           valueFormatter={(value) =>
-            value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 6 })
+            value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })
           }
           icon={Zap}
           animate={false}

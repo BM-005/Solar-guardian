@@ -87,6 +87,11 @@ const statusBadgeColors: Record<string, string> = {
   offline: 'bg-muted text-muted-foreground border-muted',
 };
 
+const formatFixed = (value: unknown, digits: number, fallback = '0'): string => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric.toFixed(digits) : fallback;
+};
+
 export default function PanelGrid() {
   const { toast } = useToast();
   const [panels, setPanels] = useState<PanelData[]>([]);
@@ -106,6 +111,7 @@ export default function PanelGrid() {
 
     async function fetchPanels() {
       try {
+        if (isMounted) setError(null);
         const response = await fetch(`/api/panels?t=${Date.now()}`, { cache: 'no-store' });
         if (!response.ok) {
           throw new Error(`API error: ${response.status}`);
@@ -635,11 +641,11 @@ export default function PanelGrid() {
                               {panel.status}
                             </Badge>
                           </TableCell>
-                          <TableCell>{panel.efficiency?.toFixed(1) || '0'}%</TableCell>
-                          <TableCell>{Number(panel.currentOutput ?? 0).toFixed(2)} W</TableCell>
-                          <TableCell>{panel.sensorVoltage?.toFixed(2) || 'N/A'} V</TableCell>
-                          <TableCell>{panel.sensorCurrentMa !== null && panel.sensorCurrentMa !== undefined ? (panel.sensorCurrentMa / 1000).toFixed(3) : 'N/A'} A</TableCell>
-                          <TableCell>{panel.temperature?.toFixed(1) || '0'}°C</TableCell>
+                          <TableCell>{formatFixed(panel.efficiency, 1)}%</TableCell>
+                          <TableCell>{formatFixed(panel.currentOutput, 2)} W</TableCell>
+                          <TableCell>{panel.sensorVoltage !== null && panel.sensorVoltage !== undefined ? `${formatFixed(panel.sensorVoltage, 2)} V` : 'N/A'}</TableCell>
+                          <TableCell>{panel.sensorCurrentMa !== null && panel.sensorCurrentMa !== undefined ? `${formatFixed((Number(panel.sensorCurrentMa) || 0) / 1000, 3)} A` : 'N/A'}</TableCell>
+                          <TableCell>{formatFixed(panel.temperature, 1)}°C</TableCell>
                           <TableCell className="text-muted-foreground">
                             {panel.lastChecked ? format(new Date(panel.lastChecked), 'MMM dd, HH:mm') : 'N/A'}
                           </TableCell>
@@ -708,7 +714,7 @@ export default function PanelGrid() {
                 {selectedRow.panels.map((panel) => (
                   <div key={panel.id} className="flex items-center justify-between rounded border px-2 py-1">
                     <span>{panel.panelId}</span>
-                    <span className="text-xs">{panel.currentOutput.toFixed(2)} W</span>
+                    <span className="text-xs">{formatFixed(panel.currentOutput, 2)} W</span>
                   </div>
                 ))}
               </div>
