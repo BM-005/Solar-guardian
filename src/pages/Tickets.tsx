@@ -31,7 +31,9 @@ import {
 interface TicketFromAPI {
   id: string;
   ticketNumber: string;
+  scanId?: string | null;
   scanPanelId?: string | null;
+  scanRowNumber?: number | null;
   panelId: string | null;
   faultId: string | null;
   status: 'open' | 'in_progress' | 'closed';
@@ -104,7 +106,6 @@ export default function Tickets() {
   const [ticketDetailsOpen, setTicketDetailsOpen] = useState(false);
   const [ticketDetails, setTicketDetails] = useState<any>(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
-  const [ticketAlertMeta, setTicketAlertMeta] = useState<{ alertId?: string | null; scanId?: string | null } | null>(null);
   const [ticketScanDetails, setTicketScanDetails] = useState<any>(null);
 
   const getScanPanelNumber = (scan: any) => {
@@ -195,7 +196,7 @@ export default function Tickets() {
       }
     }
     fetchData();
-    const intervalId = window.setInterval(fetchData, 5000);
+    const intervalId = window.setInterval(fetchData, 2000);
 
     // Refetch when window gets focus to update counts after assignments from other pages
     const handleFocus = () => fetchData();
@@ -256,37 +257,27 @@ export default function Tickets() {
     setSelectedTicket(ticket);
     setTicketDetailsOpen(true);
     setLoadingDetails(true);
-    setTicketAlertMeta(null);
     setTicketScanDetails(null);
     try {
       const response = await fetch(`/api/tickets/${ticket.id}`);
+      let detailsPayload: any = ticket;
       if (response.ok) {
-        const details = await response.json();
-        setTicketDetails(details);
+        detailsPayload = await response.json();
+        setTicketDetails(detailsPayload);
       } else {
         setTicketDetails(ticket); // fallback to list data
       }
-      // Fetch alert meta (alertId + scanId) for this ticket
-      try {
-        const alertsRes = await fetch('/api/alerts');
-        if (alertsRes.ok) {
-          const alerts = await alertsRes.json();
-          const alert =
-            alerts.find((a: any) => a.ticketId === ticket.id && a.scanId) ||
-            alerts.find((a: any) => a.ticketId === ticket.id);
-          if (alert) {
-            setTicketAlertMeta({ alertId: alert.alertId || null, scanId: alert.scanId || null });
-            if (alert.scanId) {
-              const scanRes = await fetch(`/api/solar-scans/${alert.scanId}`);
-              if (scanRes.ok) {
-                const scan = await scanRes.json();
-                setTicketScanDetails(scan);
-              }
-            }
+      const linkedScanId = detailsPayload?.scanId || ticket.scanId;
+      if (linkedScanId) {
+        try {
+          const scanRes = await fetch(`/api/solar-scans/${linkedScanId}`);
+          if (scanRes.ok) {
+            const scan = await scanRes.json();
+            setTicketScanDetails(scan);
           }
+        } catch (err) {
+          console.warn('Failed to fetch scan details:', err);
         }
-      } catch (err) {
-        console.warn('Failed to fetch alert/scan details:', err);
       }
     } catch (err) {
       console.error('Failed to fetch ticket details:', err);
@@ -469,7 +460,11 @@ export default function Tickets() {
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Row ID</label>
                   <p className="mt-1">
-                    {ticketDetails.panel?.row !== undefined ? `ROW ${ticketDetails.panel.row}` : 'N/A'}
+                    {typeof ticketScanDetails?.rowNumber === 'number'
+                      ? `ROW ${ticketScanDetails.rowNumber}`
+                      : typeof ticketDetails?.scanRowNumber === 'number'
+                      ? `ROW ${ticketDetails.scanRowNumber}`
+                      : 'N/A'}
                   </p>
                 </div>
                 <div>
@@ -484,12 +479,6 @@ export default function Tickets() {
                   <label className="text-sm font-medium text-muted-foreground">Assigned To</label>
                   <p className="mt-1">
                     {getTechnician(ticketDetails.assignedTechnicianId)?.name || 'Unassigned'}
-                  </p>
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-muted-foreground">Alert ID</label>
-                  <p className="mt-1 font-mono text-xs">
-                    {ticketAlertMeta?.alertId || 'N/A'}
                   </p>
                 </div>
               </div>
@@ -516,16 +505,6 @@ export default function Tickets() {
               <div className="space-y-3">
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Scan Details</label>
-                  <div className="mt-1 grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <span className="text-muted-foreground">Timestamp</span>
-                      <p className="mt-1">{ticketScanDetails?.timestamp || 'N/A'}</p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Device ID</span>
-                      <p className="mt-1">{ticketScanDetails?.deviceId || 'N/A'}</p>
-                    </div>
-                  </div>
                 </div>
 
                 <div className="grid gap-3 md:grid-cols-2">

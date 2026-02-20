@@ -3,6 +3,12 @@ import prisma from '../db.js';
 
 const router = Router();
 const STRICT_ALERT_ID_REGEX = /^ALT-(\d{3})$/i;
+const normalizeAlertStatus = (value: unknown): 'warning' | 'fault' | 'ignore' => {
+  const status = String(value ?? '').trim().toLowerCase();
+  if (status === 'warning') return 'warning';
+  if (status === 'fault' || status === 'critical' || status === 'error') return 'fault';
+  return 'ignore';
+};
 
 // Generate sequential alert ID in ALT-XXX format (ALT-001, ALT-002, ...)
 export const generateAlertId = async (): Promise<string> => {
@@ -104,9 +110,27 @@ router.get('/', async (_req: Request, res: Response) => {
 router.post('/', async (req: Request, res: Response) => {
   try {
     const { zone, row, status, message, scanId, ticketId } = req.body;
+    const normalizedStatus = normalizeAlertStatus(status);
 
     if (!zone || row === undefined || !status) {
       return res.status(400).json({ error: 'Missing required fields: zone, row, status' });
+    }
+
+    // Only warning/fault are valid active alerts.
+    // Healthy/offline/non-actionable statuses should clear active alerts for the row.
+    if (normalizedStatus === 'ignore') {
+      await prisma.alert.updateMany({
+        where: {
+          zone,
+          row,
+          dismissed: false,
+        },
+        data: {
+          dismissed: true,
+          dismissedAt: new Date(),
+        },
+      });
+      return res.status(204).send();
     }
 
     // Try to find an existing active alert for this zone/row (regardless of status)
@@ -137,7 +161,7 @@ router.post('/', async (req: Request, res: Response) => {
         where: { id: existingAlert.id },
         data: {
           ...(reassignedAlertId ? { alertId: reassignedAlertId } : {}),
-          status, // Update to new status (fault/warning/healthy)
+          status: normalizedStatus,
           message: message || existingAlert.message,
           scanId: scanId || existingAlert.scanId,
           ticketId: ticketId || existingAlert.ticketId,
@@ -152,7 +176,7 @@ router.post('/', async (req: Request, res: Response) => {
     const alert = await createAlertWithSequentialId({
       zone,
       row,
-      status,
+      status: normalizedStatus,
       message: message || null,
       dismissed: false,
       scanId: scanId || null,

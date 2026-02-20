@@ -262,6 +262,14 @@ const getSeverityFromHealthScore = (healthScore: number): 'CRITICAL' | 'HIGH' | 
   return 'LOW';
 };
 
+const normalizeCropStatus = (value: unknown): 'CLEAN' | 'DUSTY' | 'FAULTY' | 'UNKNOWN' => {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  if (normalized === 'CLEAN' || normalized === 'HEALTHY' || normalized === 'NORMAL') return 'CLEAN';
+  if (normalized === 'DUSTY' || normalized === 'DIRTY' || normalized.includes('DUST')) return 'DUSTY';
+  if (normalized === 'FAULTY' || normalized === 'FAULT' || normalized.includes('FAULT')) return 'FAULTY';
+  return 'UNKNOWN';
+};
+
 const SCAN_DUPLICATE_WINDOW_SECONDS = 120;
 const nearlyEqual = (a?: number | null, b?: number | null, epsilon = 0.35) => {
   if (a == null || b == null) return true;
@@ -522,7 +530,7 @@ io.on('connection', (socket) => {
 
       panelCropsInput.forEach((crop, index) => {
         const panelNumber = crop.panel_number ?? `P${index + 1}`;
-        const status = crop.status ?? 'UNKNOWN';
+        const status = normalizeCropStatus(crop.status);
         const hasDust = crop.has_dust ?? status === 'DUSTY';
         let webPath: string | null = null;
 
@@ -775,7 +783,7 @@ io.on('connection', (socket) => {
       const actionableDustyCount = panelDetectedDustyCount;
       const hasScanIssues = hasFaulty || actionableDustyCount > 0;
       const shouldAutoCreateTicket =
-        hasScanIssues && (normalizedPriority === 'MEDIUM' || normalizedPriority === 'HIGH');
+        hasScanIssues;
       const scanPanelId =
         panelCropsForClients.find((crop) => crop.status === 'FAULTY' || crop.status === 'DUSTY')?.panel_number;
 
@@ -785,77 +793,75 @@ io.on('connection', (socket) => {
           where: { id: savedScan.id },
           data: { status: 'processing', updatedAt: new Date() }
         });
-        
-        // Schedule automation to run after 3 seconds
-        setTimeout(async () => {
-          try {
-            // Find a panel to associate with this scan
-            const panel = await prisma.solarPanel.findFirst({
+        try {
+          // Find a panel to associate with this scan
+          const panel =
+            (await prisma.solarPanel.findFirst({
               where: { status: { not: 'offline' } },
               orderBy: { lastChecked: 'desc' }
+            })) ??
+            (await prisma.solarPanel.findFirst({
+              orderBy: { lastChecked: 'desc' }
+            }));
+
+          if (panel) {
+            const incidentId = generateIncidentId();
+            const derivedFaultType = hasFaulty
+              ? 'thermal_fault'
+              : actionableDustyCount >= AUTO_TICKET_THRESHOLD
+              ? 'dust_accumulation'
+              : 'scan_anomaly';
+            const effectiveFaultType = hasFaulty
+              ? 'thermal_fault'
+              : actionableDustyCount > 0
+              ? 'dust_accumulation'
+              : derivedFaultType;
+
+            const automationResult = await createFaultTicketAndAssignment({
+              incidentId,
+              panelId: panel.id,
+              faultType: effectiveFaultType,
+              severity: normalizedSeverity,
+              detectedAt: savedScan.timestamp,
+              description: `Automated scan processing - ${
+                hasFaulty
+                  ? 'thermal fault detected'
+                  : 'dust accumulation: ' + actionableDustyCount + ' panels'
+              }`,
+              aiConfidence: Math.max(0, Math.min(100, riskScore)),
+              aiAnalysis: `Scan severity: ${severity}; dusty panels: ${actionableDustyCount}; faulty detections: ${
+                hasFaulty ? 'yes' : 'no'
+              }`,
+              recommendedAction: hasFaulty
+                ? 'Immediate technician dispatch for thermal fault verification'
+                : 'Schedule panel cleaning and technician validation',
+              droneImageUrl: mainImageDataUrl || mainImageWebPath || undefined,
+              thermalImageUrl: thermalImageDataUrl || thermalImageWebPath || undefined,
+              locationX: 0,
+              locationY: 0,
+              scanId: savedScan.id,
+              scanPanelId,
             });
 
-            if (panel) {
-              const incidentId = generateIncidentId();
-              const derivedFaultType = hasFaulty
-                ? 'thermal_fault'
-                : actionableDustyCount >= AUTO_TICKET_THRESHOLD
-                ? 'dust_accumulation'
-                : 'scan_anomaly';
-              const effectiveFaultType = hasFaulty
-                ? 'thermal_fault'
-                : actionableDustyCount > 0
-                ? 'dust_accumulation'
-                : derivedFaultType;
+            // Update scan status to processed
+            await prisma.solarScan.update({
+              where: { id: savedScan.id },
+              data: { status: 'processed', updatedAt: new Date() }
+            });
 
-
-              const automationResult = await createFaultTicketAndAssignment({
-                incidentId,
-                panelId: panel.id,
-                faultType: effectiveFaultType,
-                severity: normalizedSeverity,
-                detectedAt: savedScan.timestamp,
-                description: `Automated scan processing - ${
-                  hasFaulty
-                    ? 'thermal fault detected'
-                    : 'dust accumulation: ' + actionableDustyCount + ' panels'
-                }`,
-                aiConfidence: Math.max(0, Math.min(100, riskScore)),
-                aiAnalysis: `Scan severity: ${severity}; dusty panels: ${actionableDustyCount}; faulty detections: ${
-                  hasFaulty ? 'yes' : 'no'
-                }`,
-                recommendedAction: hasFaulty
-                  ? 'Immediate technician dispatch for thermal fault verification'
-                  : 'Schedule panel cleaning and technician validation',
-                droneImageUrl: mainImageDataUrl || mainImageWebPath || undefined,
-                thermalImageUrl: thermalImageDataUrl || thermalImageWebPath || undefined,
-                locationX: 0,
-                locationY: 0,
-                scanId: savedScan.id,
-                scanPanelId,
-              });
-
-              // Update scan status to processed
-              await prisma.solarScan.update({
-                where: { id: savedScan.id },
-                data: { status: 'processed', updatedAt: new Date() }
-              });
-
-              console.log(
-                'âœ… Automation triggered (3s delay): Ticket',
-                automationResult.ticketNumber,
-                'assigned to technician'
-              );
-              
-              // Keep scan entry visible and linked to the created ticket workflow.
-              console.log('✅ Scan retained after ticket creation');
-            } else {
-              console.log('âš ï¸ No panel found for automation - scan saved but no ticket created');
-            }
-          } catch (autoError) {
-            console.error('âŒ Automation error:', autoError);
+            console.log(
+              'Automation triggered immediately: Ticket',
+              automationResult.ticketNumber,
+              'assigned to technician'
+            );
+            // Keep scan entry visible and linked to the created ticket workflow.
+            console.log('Scan retained after ticket creation');
+          } else {
+            console.log('No panel found for automation - scan saved but no ticket created');
           }
-        }, 3000); // 3 second delay
+        } catch (autoError) {
+          console.error('Automation error:', autoError);
+        }
       }
 
       const response = {

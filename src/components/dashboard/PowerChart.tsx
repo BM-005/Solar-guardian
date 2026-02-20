@@ -68,11 +68,42 @@ export function PowerChart({ daily, weekly, monthly }: PowerChartProps) {
     switch (period) {
       case 'daily': {
         const pts = toPoints(daily);
-        return aggregateByBucket(
-          pts,
-          (d) => format(d, 'yyyy-MM-dd HH'),
-          (d) => format(d, 'HH:mm')
+        const now = new Date();
+        const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+        const bucketHours = 2; // 2-hour buckets for clear regular x-axis labels
+        const bucketCount = 24 / bucketHours;
+
+        const buckets: Array<{ start: Date; end: Date; label: string; values: number[] }> = Array.from(
+          { length: bucketCount },
+          (_, idx) => {
+            const start = new Date(dayStart);
+            start.setHours(idx * bucketHours, 0, 0, 0);
+            const end = new Date(start);
+            end.setHours(start.getHours() + bucketHours, 0, 0, 0);
+            return {
+              start,
+              end,
+              label: format(start, 'HH:mm'),
+              values: [],
+            };
+          }
         );
+
+        pts.forEach((point) => {
+          const time = point.date.getTime();
+          const bucket = buckets.find(
+            (b) => time >= b.start.getTime() && time < b.end.getTime()
+          );
+          if (bucket) bucket.values.push(point.value);
+        });
+
+        return buckets.map((bucket) => ({
+          time: bucket.label,
+          value:
+            bucket.values.length > 0
+              ? bucket.values.reduce((sum, value) => sum + value, 0) / bucket.values.length
+              : 0,
+        }));
       }
       case 'weekly': {
         const dayTotals = new Map<string, { sum: number; count: number }>();
@@ -135,6 +166,7 @@ export function PowerChart({ daily, weekly, monthly }: PowerChartProps) {
   const xTickAnchor = period === 'daily' ? 'end' : 'middle';
   const xTickHeight = period === 'daily' ? 52 : 28;
   const xAxisInterval = period === 'daily' ? Math.max(0, Math.ceil(data.length / 10) - 1) : 0;
+  const xAxisTicks = period === 'daily' ? data.map((point) => point.time) : undefined;
 
   return (
     <Card>
@@ -161,14 +193,15 @@ export function PowerChart({ daily, weekly, monthly }: PowerChartProps) {
               <CartesianGrid strokeDasharray="4 4" vertical={false} className="stroke-muted/50" />
               <XAxis
                 dataKey="time"
+                ticks={xAxisTicks}
                 tick={{ fontSize: 11 }}
                 tickLine={false}
                 axisLine={false}
                 angle={xTickAngle}
                 textAnchor={xTickAnchor}
                 height={xTickHeight}
-                interval={xAxisInterval}
-                minTickGap={period === 'daily' ? 8 : 0}
+                interval={period === 'daily' ? 0 : xAxisInterval}
+                minTickGap={period === 'daily' ? 0 : 8}
                 className="text-muted-foreground"
               />
               <YAxis

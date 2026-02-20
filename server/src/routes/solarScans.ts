@@ -5,8 +5,6 @@ import { generateAlertId } from './alerts.js';
 
 const router = Router();
 const DUPLICATE_WINDOW_SECONDS = 120;
-const SCAN_RETENTION_MINUTES = 30;
-const getScanRetentionCutoff = () => new Date(Date.now() - SCAN_RETENTION_MINUTES * 60 * 1000);
 const toJpegDataUrl = (rawData?: string | null) => {
   if (!rawData) return null;
   if (rawData.startsWith('data:image/')) return rawData;
@@ -132,13 +130,26 @@ const resolvePanel = async (panelCode?: string) => {
   
   // Otherwise, get any available panel for the automation
   // In a real scenario, you might want to match by zone/device
-  return prisma.solarPanel.findFirst({
+  const onlinePanel = await prisma.solarPanel.findFirst({
     where: { status: { not: 'offline' } },
     orderBy: { lastChecked: 'desc' }
+  });
+  if (onlinePanel) return onlinePanel;
+
+  // Fallback so ticket flow still works even if panels are currently marked offline.
+  return prisma.solarPanel.findFirst({
+    orderBy: { lastChecked: 'desc' },
   });
 };
 
 const AUTO_TICKET_THRESHOLD = Number(process.env.AUTO_TICKET_THRESHOLD ?? 3); // Dusty panels threshold
+const normalizePanelStatus = (value: unknown): 'CLEAN' | 'DUSTY' | 'FAULTY' | 'UNKNOWN' => {
+  const status = String(value ?? '').trim().toUpperCase();
+  if (status === 'CLEAN' || status === 'HEALTHY' || status === 'NORMAL') return 'CLEAN';
+  if (status === 'DUSTY' || status === 'DIRTY') return 'DUSTY';
+  if (status === 'FAULTY' || status === 'FAULT') return 'FAULTY';
+  return 'UNKNOWN';
+};
 
 const enrichScansWithAlertContext = async <T extends { id: string; alertId: string | null; rowNumber: number | null }>(
   scans: T[],
@@ -242,18 +253,25 @@ router.post('/', async (req: Request, res: Response) => {
     const thermalImageDataUrl = toJpegDataUrl(thermalImage);
     const rgbImageDataUrl = toJpegDataUrl(rgbImage);
 
+    const normalizedPanels = Array.isArray(panels)
+      ? panels.map((panel: any) => ({
+          ...panel,
+          status: normalizePanelStatus(panel?.status),
+        }))
+      : [];
+
     // Count dusty and clean panels
-    const dustyPanelCount = panels?.filter((p: any) => p.status === 'DUSTY').length || 0;
-    const cleanPanelCount = panels?.filter((p: any) => p.status === 'CLEAN').length || 0;
+    const dustyPanelCount = normalizedPanels.filter((p: any) => p.status === 'DUSTY').length;
+    const cleanPanelCount = normalizedPanels.filter((p: any) => p.status === 'CLEAN').length;
     const totalPanels = panels?.length || 0;
-    const hasFaulty = panels?.some((p: any) => p.status === 'FAULTY') || false;
+    const hasFaulty = normalizedPanels.some((p: any) => p.status === 'FAULTY');
     const severity = thermal?.severity || 'NORMAL';
     const normalizedSeverity = normalizeSeverity(severity);
     const normalizedPriority = String(priority || 'NORMAL').toUpperCase();
     const hasScanIssues = hasFaulty || dustyPanelCount > 0;
     const scanPanelId =
-      panels?.find((p: any) => p.status === 'FAULTY' || p.status === 'DUSTY')?.panel_number ||
-      panels?.find((p: any) => p.status === 'FAULTY' || p.status === 'DUSTY')?.panelNumber ||
+      normalizedPanels.find((p: any) => p.status === 'FAULTY' || p.status === 'DUSTY')?.panel_number ||
+      normalizedPanels.find((p: any) => p.status === 'FAULTY' || p.status === 'DUSTY')?.panelNumber ||
       null;
     if (!panelIdValue) {
       panelIdValue = scanPanelId;
@@ -287,13 +305,11 @@ router.post('/', async (req: Request, res: Response) => {
       }
     }
 
-    // Determine if we should automatically create a ticket
-    // Tickets should be created only for scan issues (dusty/faulty)
-    // and only for medium/high scan priority.
+    // Determine if we should automatically create a ticket.
+    // Any scan with actionable issues (dusty/faulty) should create a ticket.
     const shouldAutoCreateTicket =
       autoProcess !== false &&
-      hasScanIssues &&
-      (normalizedPriority === 'MEDIUM' || normalizedPriority === 'HIGH');
+      hasScanIssues;
 
 // Create SolarScan record
     // Get average temperature from onsite ESP sensor (WeatherData table)
@@ -511,9 +527,9 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     // Create PanelDetection records for each panel
-    if (panels && panels.length > 0) {
+    if (normalizedPanels.length > 0) {
       await Promise.all(
-        panels.map((panel: any) => 
+        normalizedPanels.map((panel: any) => 
           prisma.panelDetection.create({
             data: {
               scanId: scan.id,
@@ -534,7 +550,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     // =====================================================
     // AUTOMATIC TICKET CREATION & TECHNICIAN ASSIGNMENT
-    // Delays by 3 seconds to allow scan to appear first in UI
+    // Runs immediately when an actionable scan is received.
     // =====================================================
     
     let automationResult = null;
@@ -546,98 +562,96 @@ router.post('/', async (req: Request, res: Response) => {
         data: { status: 'processing', updatedAt: new Date() }
       });
       
-      // Schedule automation to run after 3 seconds
-      setTimeout(async () => {
-        try {
-          // Re-fetch scan to get the latest alertId (in case it was created above)
-          const scanData = await prisma.solarScan.findUnique({
-            where: { id: scan.id },
-            select: { alertId: true, rowNumber: true, timestamp: true }
+      try {
+        // Re-fetch scan to get the latest alertId (in case it was created above)
+        const scanData = await prisma.solarScan.findUnique({
+          where: { id: scan.id },
+          select: { alertId: true, rowNumber: true, timestamp: true }
+        });
+
+        const panel = await resolvePanel();
+
+        if (panel) {
+          const incidentId = generateIncidentId();
+          const derivedFaultType = hasFaulty ? 'thermal_fault' : dustyPanelCount >= AUTO_TICKET_THRESHOLD ? 'dust_accumulation' : 'scan_anomaly';
+          const effectiveFaultType = hasFaulty
+            ? 'thermal_fault'
+            : dustyPanelCount > 0
+            ? 'dust_accumulation'
+            : derivedFaultType;
+
+          // This creates: Fault -> Ticket -> Technician Assignment -> activeTickets Increment
+          // Also links the alert with the ticket via zone, row, status
+          const panelWithZone = await prisma.solarPanel.findUnique({
+            where: { id: panel.id },
+            include: { zone: true }
           });
-          
-          const panel = await resolvePanel();
-          
-          if (panel) {
-              const incidentId = generateIncidentId();
-              const derivedFaultType = hasFaulty ? 'thermal_fault' : dustyPanelCount >= AUTO_TICKET_THRESHOLD ? 'dust_accumulation' : 'scan_anomaly';
-              const effectiveFaultType = hasFaulty
-                ? 'thermal_fault'
-                : dustyPanelCount > 0
-                ? 'dust_accumulation'
-                : derivedFaultType;
-            
-            
-            // This creates: Fault â†’ Ticket â†’ Technician Assignment â†’ activeTickets Increment
-            // Also links the alert with the ticket via zone, row, status
-            const panelWithZone = await prisma.solarPanel.findUnique({
-              where: { id: panel.id },
-              include: { zone: true }
-            });
-            
-            const zoneName = panelWithZone?.zone?.name || 'Unknown';
-            const rowNum = scanData?.rowNumber || panel.row;
-            const alertStatus = hasFaulty || normalizedSeverity === 'critical' ? 'fault' : 'warning';
-            
-            automationResult = await createFaultTicketAndAssignment({
-                incidentId,
-                panelId: panel.id,
-                faultType: effectiveFaultType,
-              severity: normalizedSeverity,
-              detectedAt: scanData?.timestamp || scan.timestamp,
-              description: `Automated scan processing - ${hasFaulty ? 'thermal fault detected' : 'dust accumulation: ' + dustyPanelCount + ' panels'}`,
-              aiConfidence: Math.max(0, Math.min(100, Number(thermal?.risk_score ?? 50))),
-              aiAnalysis: `Scan severity: ${severity}; dusty panels: ${dustyPanelCount}; faulty detections: ${hasFaulty ? 'yes' : 'no'}`,
-              recommendedAction: hasFaulty
-                ? 'Immediate technician dispatch for thermal fault verification'
-                : 'Schedule panel cleaning and technician validation',
-              droneImageUrl: rgbImageDataUrl || undefined,
-              thermalImageUrl: thermalImageDataUrl || undefined,
-              locationX: 0,
-              locationY: 0,
-              scanId: scan.id,
-              scanPanelId: scanPanelId || undefined,
-              zone: zoneName,
-              row: rowNum,
-              status: alertStatus,
-              alertId: scanData?.alertId || undefined,
-            });
 
-              // Update scan status to processed
-              await prisma.solarScan.update({
-                where: { id: scan.id },
-                data: { status: 'processed', updatedAt: new Date() }
-              });
+          const zoneName = panelWithZone?.zone?.name || 'Unknown';
+          const rowNum = scanData?.rowNumber || panel.row;
+          const alertStatus = hasFaulty || normalizedSeverity === 'critical' ? 'fault' : 'warning';
 
-              console.log('âœ… Automation triggered (3s delay): Ticket', automationResult.ticketNumber, 'assigned to technician');
-              
-              // Keep the scan so ticket details can display scan images and metadata
-              console.log('âœ… Scan retained for ticket details');
-          } else {
-            console.log('âš ï¸ No panel found for automation - scan saved but no ticket created');
-            await prisma.solarScan.update({
-              where: { id: scan.id },
-              data: { status: 'pending', updatedAt: new Date() }
-            });
-          }
-        } catch (autoError) {
-          console.error('âŒ Automation error:', autoError);
+          automationResult = await createFaultTicketAndAssignment({
+            incidentId,
+            panelId: panel.id,
+            faultType: effectiveFaultType,
+            severity: normalizedSeverity,
+            detectedAt: scanData?.timestamp || scan.timestamp,
+            description: `Automated scan processing - ${hasFaulty ? 'thermal fault detected' : 'dust accumulation: ' + dustyPanelCount + ' panels'}`,
+            aiConfidence: Math.max(0, Math.min(100, Number(thermal?.risk_score ?? 50))),
+            aiAnalysis: `Scan severity: ${severity}; dusty panels: ${dustyPanelCount}; faulty detections: ${hasFaulty ? 'yes' : 'no'}`,
+            recommendedAction: hasFaulty
+              ? 'Immediate technician dispatch for thermal fault verification'
+              : 'Schedule panel cleaning and technician validation',
+            droneImageUrl: rgbImageDataUrl || undefined,
+            thermalImageUrl: thermalImageDataUrl || undefined,
+            locationX: 0,
+            locationY: 0,
+            scanId: scan.id,
+            scanPanelId: scanPanelId || undefined,
+            zone: zoneName,
+            row: rowNum,
+            status: alertStatus,
+            alertId: scanData?.alertId || undefined,
+          });
+
+          // Update scan status to processed
+          await prisma.solarScan.update({
+            where: { id: scan.id },
+            data: { status: 'processed', updatedAt: new Date() }
+          });
+
+          console.log('Automation triggered immediately: Ticket', automationResult.ticketNumber, 'assigned to technician');
+          // Keep the scan so ticket details can display scan images and metadata
+          console.log('Scan retained for ticket details');
+        } else {
+          console.log('No panel found for automation - scan saved but no ticket created');
           await prisma.solarScan.update({
             where: { id: scan.id },
             data: { status: 'pending', updatedAt: new Date() }
           });
         }
-      }, 3000); // 3 second delay
+      } catch (autoError) {
+        console.error('Automation error:', autoError);
+        await prisma.solarScan.update({
+          where: { id: scan.id },
+          data: { status: 'pending', updatedAt: new Date() }
+        });
+      }
     }
 
     res.status(201).json({
       success: true,
       scanId: scan.id,
-      message: shouldAutoCreateTicket 
-        ? 'Solar scan recorded - ticket will be created in 3 seconds' 
+      message: shouldAutoCreateTicket
+        ? 'Solar scan recorded and ticket automation triggered'
         : 'Solar scan recorded successfully',
       automation: shouldAutoCreateTicket ? {
-        ticketCreated: false, // Will be created after 3 second delay
-        message: 'Ticket will be automatically created and assigned to technician in 3 seconds'
+        ticketCreated: Boolean(automationResult?.ticketId),
+        ticketNumber: automationResult?.ticketNumber || null,
+        message: automationResult?.ticketId
+          ? 'Ticket automatically created and assigned'
+          : 'Ticket automation triggered'
       } : null
     });
   } catch (error) {
@@ -650,13 +664,11 @@ router.post('/', async (req: Request, res: Response) => {
 router.get('/', async (req: Request, res: Response) => {
   try {
     const { status, limit = 50 } = req.query;
-    const cutoff = getScanRetentionCutoff();
 
     const where: any = {};
     if (status) {
       where.status = status;
     }
-    where.createdAt = { gte: cutoff };
 
     const scans = await prisma.solarScan.findMany({
       where,
@@ -677,9 +689,7 @@ router.get('/', async (req: Request, res: Response) => {
 // GET /api/solar-scans/latest - Get latest scan
 router.get('/latest', async (_req: Request, res: Response) => {
   try {
-    const cutoff = getScanRetentionCutoff();
     const scan = await prisma.solarScan.findFirst({
-      where: { createdAt: { gte: cutoff } },
       orderBy: { timestamp: 'desc' },
       include: {
         panelDetections: true
@@ -701,8 +711,7 @@ router.get('/latest', async (_req: Request, res: Response) => {
 // GET /api/solar-scans/stats/summary - Get scan statistics
 router.get('/stats/summary', async (_req: Request, res: Response) => {
   try {
-    const cutoff = getScanRetentionCutoff();
-    const retentionWhere = { createdAt: { gte: cutoff } };
+    const retentionWhere = {};
 
     const totalScans = await prisma.solarScan.count({ where: retentionWhere });
     const pendingScans = await prisma.solarScan.count({

@@ -3,6 +3,62 @@ import prisma from '../db.js';
 
 const router = Router();
 
+const enrichScanAlertMeta = async (
+  scans: Array<{ id: string; alertId: string | null; rowNumber: number | null }>
+) => {
+  if (!scans.length) {
+    return new Map<string, { alertId: string | null; rowNumber: number | null }>();
+  }
+
+  const scanIds = scans.map((scan) => scan.id);
+  const scanAlertIds = scans
+    .map((scan) => scan.alertId)
+    .filter((value): value is string => Boolean(value));
+
+  const whereOr: Array<Record<string, unknown>> = [{ scanId: { in: scanIds } }];
+  if (scanAlertIds.length > 0) {
+    whereOr.push({ alertId: { in: scanAlertIds } });
+  }
+
+  const linkedAlerts = await prisma.alert.findMany({
+    where: {
+      dismissed: false,
+      OR: whereOr,
+    },
+    select: {
+      scanId: true,
+      alertId: true,
+      row: true,
+      createdAt: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const alertByScanId = new Map<string, { alertId: string | null; row: number | null }>();
+  const alertByAlertId = new Map<string, { alertId: string | null; row: number | null }>();
+  linkedAlerts.forEach((alert) => {
+    if (alert.scanId && !alertByScanId.has(alert.scanId)) {
+      alertByScanId.set(alert.scanId, { alertId: alert.alertId, row: alert.row });
+    }
+    if (alert.alertId && !alertByAlertId.has(alert.alertId)) {
+      alertByAlertId.set(alert.alertId, { alertId: alert.alertId, row: alert.row });
+    }
+  });
+
+  const resolved = new Map<string, { alertId: string | null; rowNumber: number | null }>();
+  scans.forEach((scan) => {
+    const linkedByScan = alertByScanId.get(scan.id);
+    const linkedByAlertId = scan.alertId ? alertByAlertId.get(scan.alertId) : undefined;
+    const linked = linkedByScan || linkedByAlertId;
+    resolved.set(scan.id, {
+      alertId: scan.alertId ?? linked?.alertId ?? null,
+      rowNumber: scan.rowNumber ?? linked?.row ?? null,
+    });
+  });
+
+  return resolved;
+};
+
 // Create a new ticket (used by n8n automation)
 router.post('/', async (req: Request, res: Response) => {
   try {
@@ -83,6 +139,21 @@ router.get('/', async (req: Request, res: Response) => {
       }
     }
 
+    const alertLinkedTickets = await prisma.alert.findMany({
+      where: {
+        ticketId: { not: null },
+        scanId: { not: null },
+      },
+      select: { ticketId: true, scanId: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    for (const alertLink of alertLinkedTickets) {
+      if (!alertLink.ticketId || !alertLink.scanId) continue;
+      if (!ticketToScanMap.has(alertLink.ticketId)) {
+        ticketToScanMap.set(alertLink.ticketId, alertLink.scanId);
+      }
+    }
+
     const scanLinkedTicketIds = Array.from(ticketToScanMap.keys());
 
     if (!scanLinkedTicketIds.length) {
@@ -95,44 +166,42 @@ router.get('/', async (req: Request, res: Response) => {
       select: {
         id: true,
         priority: true,
+        alertId: true,
+        rowNumber: true,
         panelDetections: {
           select: { panelNumber: true, status: true },
           orderBy: { createdAt: 'asc' },
         },
       },
     });
+    const resolvedScanMeta = await enrichScanAlertMeta(
+      scans.map((scan) => ({
+        id: scan.id,
+        alertId: scan.alertId ?? null,
+        rowNumber: scan.rowNumber ?? null,
+      }))
+    );
 
     const scanToPanelNumber = new Map<string, string>();
-    const actionableScanIds = new Set<string>();
     for (const scan of scans) {
       const panelNumber =
         scan.panelDetections.find(
-          (panel) => panel.status === 'FAULTY' || panel.status === 'DUSTY'
+          (panel) => {
+            const normalized = String(panel.status ?? '').trim().toUpperCase();
+            return normalized === 'FAULTY' || normalized === 'FAULT' || normalized === 'DUSTY' || normalized === 'DIRTY';
+          }
         )?.panelNumber ?? null;
-      const scanPriority = String(scan.priority || 'NORMAL').toUpperCase();
-      const hasActionablePanel = scan.panelDetections.some(
-        (panel) => panel.status === 'FAULTY' || panel.status === 'DUSTY'
-      );
-      if (hasActionablePanel && (scanPriority === 'MEDIUM' || scanPriority === 'HIGH')) {
-        actionableScanIds.add(scan.id);
-      }
       if (panelNumber) {
         scanToPanelNumber.set(scan.id, panelNumber);
       }
     }
 
-    const scanQualifiedTicketIds = scanLinkedTicketIds.filter((ticketId) => {
-      const scanId = ticketToScanMap.get(ticketId);
-      if (!scanId) return false;
-      return actionableScanIds.has(scanId);
-    });
-
-    if (!scanQualifiedTicketIds.length) {
+    if (!scanLinkedTicketIds.length) {
       return res.json([]);
     }
 
     const where: any = {
-      id: { in: scanQualifiedTicketIds },
+      id: { in: scanLinkedTicketIds },
     };
 
     if (status) {
@@ -159,7 +228,6 @@ router.get('/', async (req: Request, res: Response) => {
         faultType: true,
         zone: true,
         row: true,
-        alertId: true,
         droneImageUrl: true,
         thermalImageUrl: true,
         aiAnalysis: true,
@@ -184,7 +252,10 @@ router.get('/', async (req: Request, res: Response) => {
         null;
       return {
         ...ticket,
+        scanId: scanId ?? null,
         scanPanelId,
+        scanAlertId: scanId ? (resolvedScanMeta.get(scanId)?.alertId ?? null) : null,
+        scanRowNumber: scanId ? (resolvedScanMeta.get(scanId)?.rowNumber ?? null) : null,
       };
     });
 
@@ -198,6 +269,16 @@ router.get('/', async (req: Request, res: Response) => {
 // Get ticket by ID with all details
 router.get('/:id', async (req: Request, res: Response) => {
   try {
+    const scanEvent = await prisma.automationEvent.findFirst({
+      where: {
+        stage: 'ticket_created',
+        ticketId: req.params.id,
+        scanId: { not: null },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { scanId: true },
+    });
+
     const ticket = await prisma.ticket.findUnique({
       where: { id: req.params.id },
       select: {
@@ -214,7 +295,6 @@ router.get('/:id', async (req: Request, res: Response) => {
         faultType: true,
         zone: true,
         row: true,
-        alertId: true,
         droneImageUrl: true,
         thermalImageUrl: true,
         aiAnalysis: true,
@@ -237,7 +317,39 @@ router.get('/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Ticket not found' });
     }
 
-    res.json(ticket);
+    const alertLink = await prisma.alert.findFirst({
+      where: {
+        ticketId: req.params.id,
+        scanId: { not: null },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { scanId: true },
+    });
+
+    const linkedScanId = scanEvent?.scanId ?? alertLink?.scanId ?? null;
+    const linkedScan = linkedScanId
+      ? await prisma.solarScan.findUnique({
+          where: { id: linkedScanId },
+          select: { alertId: true, rowNumber: true },
+        })
+      : null;
+    const resolvedScanMeta = linkedScanId
+      ? await enrichScanAlertMeta([
+          {
+            id: linkedScanId,
+            alertId: linkedScan?.alertId ?? null,
+            rowNumber: linkedScan?.rowNumber ?? null,
+          },
+        ])
+      : new Map<string, { alertId: string | null; rowNumber: number | null }>();
+    const resolvedMeta = linkedScanId ? resolvedScanMeta.get(linkedScanId) : null;
+
+    res.json({
+      ...ticket,
+      scanId: linkedScanId,
+      scanAlertId: resolvedMeta?.alertId ?? null,
+      scanRowNumber: resolvedMeta?.rowNumber ?? null,
+    });
   } catch (error) {
     console.error('Error fetching ticket:', error);
     res.status(500).json({ error: 'Failed to fetch ticket' });

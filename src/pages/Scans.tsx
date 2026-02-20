@@ -124,7 +124,6 @@ const panelStatusColors: Record<string, string> = {
   FAULTY: 'bg-red-500/10 text-red-500 border-red-500/30',
   UNKNOWN: 'bg-muted text-muted-foreground border-muted',
 };
-const SCAN_RETENTION_MS = 30 * 60 * 1000;
 
 export default function Scans() {
   const DEGREE_C = '\u00B0C';
@@ -152,11 +151,6 @@ export default function Scans() {
   const [piUrlInput, setPiUrlInput] = useState(serverUrl);
   const [sourceFilter, setSourceFilter] = useState<'all' | 'api' | 'pi'>('all');
   const piScansRef = useRef(piScans);
-  const isWithinRetentionWindow = (scan: Pick<SolarScanFromAPI, 'createdAt' | 'updatedAt' | 'timestamp'>) => {
-    const scanTime = new Date(scan.createdAt || scan.updatedAt || scan.timestamp).getTime();
-    if (Number.isNaN(scanTime)) return false;
-    return scanTime >= Date.now() - SCAN_RETENTION_MS;
-  };
 
   // Fetch backend config on mount to enable dynamic image URL resolution
   useEffect(() => {
@@ -184,10 +178,6 @@ export default function Scans() {
         // This keeps Scans in sync after backend converts/deletes scans into tickets.
         const persistedScanIds = new Set<string>(data.map((scan: SolarScanFromAPI) => scan.id));
         piScansRef.current.forEach((piScan) => {
-          if (!isWithinRetentionWindow(piScan)) {
-            removePiScan(piScan.id);
-            return;
-          }
           const persistedId = piScan.backendId || (piScan.id.startsWith('pi-') ? null : piScan.id);
           if (persistedId && !persistedScanIds.has(persistedId)) {
             removePiScan(piScan.id);
@@ -219,7 +209,7 @@ export default function Scans() {
     const intervalId = window.setInterval(() => {
       fetchScans();
       fetchStats();
-    }, 60000);
+    }, 5000);
     return () => {
       window.clearInterval(intervalId);
     };
@@ -337,7 +327,6 @@ export default function Scans() {
   const allScans = Array.from(
     [...piScans, ...scans]
       .filter((scan) => scan.priority !== 'NORMAL')
-      .filter((scan) => isWithinRetentionWindow(scan))
       .reduce<Map<string, SolarScanFromAPI>>((acc, scan) => {
         const key = getCanonicalScanKey(scan);
         const existing = acc.get(key);

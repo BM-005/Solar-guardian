@@ -71,6 +71,15 @@ const getVoltageStatus = (voltage: number): 'healthy' | 'warning' | 'fault' | 'o
   return 'healthy';
 };
 
+const computeRowStatusFromPanels = (rowPanels: PanelData[]): { status: RowGroupData['status']; avgVoltage: number } => {
+  const sortedPanels = [...rowPanels].sort((a, b) => a.column - b.column);
+  const devicePanel = sortedPanels.find((panel) => panel.sensorDeviceId);
+  const avgVoltage = Number(devicePanel?.sensorVoltage || 0);
+  const allOffline = sortedPanels.every((panel) => panel.status === 'offline');
+  if (allOffline) return { status: 'offline', avgVoltage };
+  return { status: getVoltageStatus(avgVoltage), avgVoltage };
+};
+
 const statusBadgeColors: Record<string, string> = {
   healthy: 'bg-success/10 text-success border-success/30',
   warning: 'bg-warning/10 text-warning border-warning/30',
@@ -155,6 +164,89 @@ export default function PanelGrid() {
     fetchExistingAlerts();
   }, []);
 
+  useEffect(() => {
+    // Only trigger alerts after initial load and after alerts are initialized from DB
+    if (!hasInitializedAlertsRef.current || !alertsInitialized) {
+      hasInitializedAlertsRef.current = true;
+      // Initialize alerted rows using the same row-status logic as Panel Grid colors.
+      const groupedByRow = new Map<string, PanelData[]>();
+      panels.forEach((panel) => {
+        const rowKey = `${panel.zone?.name}-${panel.row}`;
+        if (!groupedByRow.has(rowKey)) groupedByRow.set(rowKey, []);
+        groupedByRow.get(rowKey)!.push(panel);
+      });
+      groupedByRow.forEach((rowPanels, rowKey) => {
+        const { status } = computeRowStatusFromPanels(rowPanels);
+        if (status === 'warning' || status === 'fault') {
+          alertedRowsRef.current.add(rowKey);
+        }
+      });
+      return;
+    }
+
+    // Group panels by row and check for status changes using row voltage thresholds.
+    const rowMap = new Map<string, { zone: string; row: number; status: string; avgVoltage: number }>();
+    const groupedByRow = new Map<string, PanelData[]>();
+    
+    for (const panel of panels) {
+      const rowKey = `${panel.zone?.name}-${panel.row}`;
+      if (!groupedByRow.has(rowKey)) groupedByRow.set(rowKey, []);
+      groupedByRow.get(rowKey)!.push(panel);
+    }
+
+    groupedByRow.forEach((rowPanels, rowKey) => {
+      const first = rowPanels[0];
+      const { status, avgVoltage } = computeRowStatusFromPanels(rowPanels);
+      if (status === 'warning' || status === 'fault') {
+        rowMap.set(rowKey, {
+          zone: first.zone?.name || 'unknown',
+          row: first.row,
+          status,
+          avgVoltage,
+        });
+      }
+    });
+
+// Check each row for new alerts (that haven't been alerted yet)
+    rowMap.forEach((rowData, rowKey) => {
+      if (!alertedRowsRef.current.has(rowKey)) {
+        // New alert for this row - create alert in DB
+        alertedRowsRef.current.add(rowKey);
+
+        // Create alert in database (only for warning and fault statuses)
+        if (rowData.status === 'warning' || rowData.status === 'fault') {
+          fetch('/api/alerts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              zone: rowData.zone,
+              row: rowData.row,
+              status: rowData.status,
+              message: `Row ${rowData.row} in Zone ${rowData.zone} is showing ${rowData.status} status (voltage: ${rowData.avgVoltage.toFixed(2)}V)`
+            })
+          }).catch(err => console.error('Failed to create alert:', err));
+        }
+      }
+    });
+
+    // Clear alerted rows that are now healthy
+    const currentRowKeys = new Set(rowMap.keys());
+    alertedRowsRef.current.forEach((alertedRow) => {
+      if (!currentRowKeys.has(alertedRow)) {
+        alertedRowsRef.current.delete(alertedRow);
+        const [zone, rowStr] = alertedRow.split('-');
+        const row = Number.parseInt(rowStr, 10);
+        if (zone && Number.isFinite(row)) {
+          fetch('/api/alerts/dismiss', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ zone, row }),
+          }).catch((err) => console.error('Failed to dismiss healthy row alert:', err));
+        }
+      }
+    });
+  }, [panels, toast, alertsInitialized]);
+
   // Get unique zones
   const zones = [...new Set(panels.map(p => p.zone?.name).filter(Boolean))].sort() as string[];
 
@@ -224,64 +316,6 @@ export default function PanelGrid() {
       };
     });
   });
-
-  useEffect(() => {
-    // Only trigger alerts after initial load and after alerts are initialized from DB
-    if (!hasInitializedAlertsRef.current || !alertsInitialized) {
-      hasInitializedAlertsRef.current = true;
-      // Initialize alerted rows based on current row status (voltage-based)
-      rowGroups.forEach((rowGroup) => {
-        if (rowGroup.status === 'warning' || rowGroup.status === 'fault') {
-          alertedRowsRef.current.add(rowGroup.key);
-        }
-      });
-      return;
-    }
-
-    // Use voltage-based row status (warning/fault only)
-    const rowMap = new Map<string, { zone: string; row: number; status: string; voltageV: number }>();
-
-    for (const rowGroup of rowGroups) {
-      if (rowGroup.status === 'warning' || rowGroup.status === 'fault') {
-        rowMap.set(rowGroup.key, {
-          zone: rowGroup.zone,
-          row: rowGroup.row,
-          status: rowGroup.status,
-          voltageV: rowGroup.voltageV,
-        });
-      }
-    }
-
-    // Check each row for new alerts (that haven't been alerted yet)
-    rowMap.forEach((rowData, rowKey) => {
-      if (!alertedRowsRef.current.has(rowKey)) {
-        // New alert for this row - create alert in DB
-        alertedRowsRef.current.add(rowKey);
-
-        // Create alert in database (only for warning and fault statuses)
-        if (rowData.status === 'warning' || rowData.status === 'fault') {
-          fetch('/api/alerts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              zone: rowData.zone,
-              row: rowData.row,
-              status: rowData.status,
-              message: `Row ${rowData.row} in Zone ${rowData.zone} is showing ${rowData.status} status (voltage: ${rowData.voltageV.toFixed(2)}V)`
-            })
-          }).catch(err => console.error('Failed to create alert:', err));
-        }
-      }
-    });
-
-    // Clear alerted rows that are now healthy
-    const currentRowKeys = new Set(rowMap.keys());
-    alertedRowsRef.current.forEach((alertedRow) => {
-      if (!currentRowKeys.has(alertedRow)) {
-        alertedRowsRef.current.delete(alertedRow);
-      }
-    });
-  }, [rowGroups, toast, alertsInitialized]);
 
   const visibleRows = rowGroups
     .filter((rowGroup) => selectedZone === 'all' || rowGroup.zone === selectedZone)

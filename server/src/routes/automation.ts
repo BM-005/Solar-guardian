@@ -271,19 +271,23 @@ export const createFaultTicketAndAssignment = async (input: {
       where: { id: input.scanId },
       select: {
         priority: true,
+        dustyPanelCount: true,
         panelDetections: {
           select: { status: true },
         },
       },
     });
 
-    const scanPriority = String(sourceScan?.priority || 'NORMAL').toUpperCase();
     const hasActionablePanel =
-      sourceScan?.panelDetections.some(
-        (detection) => detection.status === 'DUSTY' || detection.status === 'FAULTY'
-      ) ?? false;
+      (sourceScan?.dustyPanelCount ?? 0) > 0 ||
+      (sourceScan?.panelDetections.some(
+        (detection) => {
+          const normalized = String(detection.status ?? '').trim().toUpperCase();
+          return normalized === 'DUSTY' || normalized === 'DIRTY' || normalized === 'FAULTY' || normalized === 'FAULT';
+        }
+      ) ?? false);
 
-    if (!sourceScan || !hasActionablePanel || (scanPriority !== 'MEDIUM' && scanPriority !== 'HIGH')) {
+    if (!sourceScan || !hasActionablePanel) {
       return {
         deduplicated: false,
         skipped: true,
@@ -373,7 +377,6 @@ export const createFaultTicketAndAssignment = async (input: {
         faultType: input.faultType,
         zone: input.zone ?? null,
         row: input.row ?? null,
-        alertId: input.alertId ?? null,
         droneImageUrl: input.droneImageUrl ?? null,
         thermalImageUrl: input.thermalImageUrl ?? null,
         aiAnalysis: input.aiAnalysis,
